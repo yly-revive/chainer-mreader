@@ -96,7 +96,7 @@ class DataUtils(object):
 
                 DataUtils.add_em_feature(json_data)
                 DataUtils.add_question_feature(json_data)
-            #return json_list
+            # return json_list
 
             # debug
             json_list_ret = [json_item for json_item in json_list if len(json_item["answers"]) > 0]
@@ -569,7 +569,11 @@ class DataUtils(object):
         q_mask = item['q_mask']
         d_mask = item['d_mask']
         # target = item['answers']
-        target = np.asarray(item['answers'])
+        # assert((len(item['answers']) == 3) or (len(item['answers']) == 1))
+        # answer_a = [np.asarray(i) for i in item['answers'] if len(i) == 2]
+        answer_a = [np.asarray(i) for i in item['answers']]
+        # target = np.asarray(item['answers'])
+        target = np.asarray(answer_a)
 
         ret = (d,)
         ret += (d_char,)
@@ -588,5 +592,20 @@ class DataUtils(object):
             print(item["document"])
             print("question:\n")
             print(item["question"])
+
+        return ret
+
+    @staticmethod
+    def convert_item_dev(item):
+
+        # d = np.ones(DataUtils.MAX_DOC_LENGTH, dtype=int) * (-1)
+        d = []
+        for i, word in enumerate(item['document']):
+            # d[i] = DataUtils.word_dict[word.lower()]
+            d.append(word)
+
+        ret = DataUtils.convert_item(item)
+
+        ret += (np.asarray(d),)
 
         return ret

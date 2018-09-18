@@ -15,6 +15,9 @@ class SFU(chainer.Chain):
             self.linear_r = L.Linear(input_size + fusion_size, input_size)
             self.linear_g = L.Linear(input_size + fusion_size, input_size)
 
+    def __call__(self, x, fusions):
+        return self.forward(x, fusions)
+
     def forward(self, x, fusions):
         """
         Args:
@@ -52,6 +55,9 @@ class InteractiveAligner(chainer.Chain):
 
     def __init__(self):
         super(InteractiveAligner, self).__init__()
+
+    def __call__(self, context, query, q_mask):
+        return self.forward(context, query, q_mask)
 
     def forward(self, context, query, q_mask):
         """
@@ -115,6 +121,9 @@ class SelfAttnAligner(chainer.Chain):
     def __init__(self):
         super(SelfAttnAligner, self).__init__()
 
+    def __call__(self, h, h_mask):
+        return self.forward(h, h_mask)
+
     def forward(self, h, h_mask):
         """
         Args:
@@ -155,6 +164,9 @@ class FNnet(chainer.Chain):
             self.linear_o = L.Linear(hidden_size, output_size)
             self.dropout = dropout
 
+    def __call__(self, input_data):
+        return self.forward(input_data)
+
     def forward(self, input_data, mask=None):
         # reshape data
         batch_size, seq_len, hidden_size = input_data.shape
@@ -190,6 +202,9 @@ class MemAnsPtr(chainer.Chain):
                 self.FFN_end.append(FNnet(6 * hidden_size, hidden_size, 1, self.args.dropout))
                 self.SFU_end.append(SFU(2 * hidden_size, 2 * hidden_size))
 
+    def __call__(self, c, y, c_mask, y_mask):
+        return self.forward(c, y, c_mask, y_mask)
+
     def forward(self, c, y, c_mask, y_mask):
 
         batch_size, seq_len, hidden_size = c.shape
@@ -202,6 +217,7 @@ class MemAnsPtr(chainer.Chain):
         p_e = None
 
         for i in six.moves.range(self.args.ptr_hops):
+            '''
             # z_s_ = F.broadcast_to(F.expand_dims(z_s, axis=1), (batch_size, seq_len, hidden_size))
             z_s_ = F.broadcast_to(z_s, (batch_size, seq_len, hidden_size))
             s = F.squeeze(self.FFN_start[i].forward(F.concat((c, z_s_, c * z_s_), axis=2)))
@@ -218,6 +234,31 @@ class MemAnsPtr(chainer.Chain):
             # z_e_ = F.broadcast_to(F.expand_dims(z_e, axis=1), (batch_size, seq_len, hidden_size))
             z_e_ = F.broadcast_to(z_e, (batch_size, seq_len, hidden_size))
             e = F.squeeze(self.FFN_end[i].forward(F.concat((c, z_e_, c * z_e_), 2)))
+
+            # e = F.where(c_mask == 1, e, -1 * self.xp.inf)
+            e = F.where(cond, e, infinit_matrix)
+
+            p_e = F.softmax(F.squeeze(e), axis=1)
+            u_e = F.batch_matmul(F.expand_dims(p_e, axis=1), c)
+            z_s = self.SFU_end[i](z_e, u_e)  # [B,1,H]
+            '''
+
+            # z_s_ = F.broadcast_to(F.expand_dims(z_s, axis=1), (batch_size, seq_len, hidden_size))
+            z_s_ = F.broadcast_to(z_s, (batch_size, seq_len, hidden_size))
+            s = F.squeeze(self.FFN_start[i](F.concat((c, z_s_, c * z_s_), axis=2)))
+
+            cond = c_mask.astype(self.xp.bool)
+            # s = F.where(c_mask == 1, s, -self.xp.inf)
+
+            infinit_matrix = self.xp.ones(s.shape, dtype=self.xp.float32) * -1 * self.xp.inf
+            s = F.where(cond, s, infinit_matrix)
+
+            p_s = F.softmax(F.squeeze(s), axis=1)
+            u_s = F.batch_matmul(F.expand_dims(p_s, axis=1), c)
+            z_e = self.SFU_start[i](z_s, u_s)
+            # z_e_ = F.broadcast_to(F.expand_dims(z_e, axis=1), (batch_size, seq_len, hidden_size))
+            z_e_ = F.broadcast_to(z_e, (batch_size, seq_len, hidden_size))
+            e = F.squeeze(self.FFN_end[i](F.concat((c, z_e_, c * z_e_), 2)))
 
             # e = F.where(c_mask == 1, e, -1 * self.xp.inf)
             e = F.where(cond, e, infinit_matrix)

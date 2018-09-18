@@ -5,7 +5,11 @@ import chainer.functions as F
 import chainer.links as L
 import six
 from linkers import *
+from evaluation import *
+from progressbar import ProgressBar
 import math
+import os
+import chainer.computational_graph as CG
 
 
 class MReader(chainer.Chain):
@@ -65,6 +69,9 @@ class MReader(chainer.Chain):
                                                          dropout=args.encoder_dropout))
 
             self.mem_ans_ptr = MemAnsPtr(self.args)
+
+            # self.f1 = AverageMeter()
+            # self.exact_match = AverageMeter()
 
     def forward(self, c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask):
         """Inputs:
@@ -185,11 +192,9 @@ class MReader(chainer.Chain):
         question = F.stack(question, axis=0)
 
         for i in six.moves.range(self.args.hops):
+            '''
             q_tide, _ = self.interactive_aligners[i].forward(c_check, question, q_mask)
-            '''
-            c_fusion_one = F.concat([q_tide, self.xp.multiply(c_check.data, q_tide.data), c_check - q_tide], axis=2)
-            c_bar = self.interactive_SFUs[i].forward(c_check, c_fusion_one)
-            '''
+            
             c_bar = self.interactive_SFUs[i].forward(c_check,
                                                      F.concat([q_tide, c_check * q_tide, c_check - q_tide], axis=2))
 
@@ -202,8 +207,24 @@ class MReader(chainer.Chain):
             # _, _, c_check = self.aggregate_rnns[i](None, None, c_hat)
             _, _, c_check = self.aggregate_rnns[i](None, None, c_hat_input)
             c_check = F.stack(c_check, axis=0)
+            '''
+            q_tide, _ = self.interactive_aligners[i](c_check, question, q_mask)
 
-        start_scores, end_scores = self.mem_ans_ptr.forward(c_check, question, c_mask, q_mask)
+            c_bar = self.interactive_SFUs[i](c_check,
+                                             F.concat([q_tide, c_check * q_tide, c_check - q_tide], axis=2))
+
+            c_tide, _ = self.self_aligners[i](c_bar, c_mask)
+            c_hat = self.self_SFUs[i](c_bar, F.concat([c_tide, c_bar * c_tide, c_bar - c_tide], axis=2))
+            # c_check = self.aggregate_rnns[i].forward(c_hat, c_mask)
+
+            # batch to tuple
+            c_hat_input = [F.squeeze(item) for item in c_hat]
+            # _, _, c_check = self.aggregate_rnns[i](None, None, c_hat)
+            _, _, c_check = self.aggregate_rnns[i](None, None, c_hat_input)
+            c_check = F.stack(c_check, axis=0)
+
+        # start_scores, end_scores = self.mem_ans_ptr.forward(c_check, question, c_mask, q_mask)
+        start_scores, end_scores = self.mem_ans_ptr(c_check, question, c_mask, q_mask)
 
         return start_scores, end_scores
 
@@ -216,8 +237,8 @@ class MReader(chainer.Chain):
             # start_losses = F.bernoulli_nll(start_scores, target[:, 0, 0].astype(self.xp.float32))
             # end_losses = F.bernoulli_nll(end_scores, target[:, 0, 1].astype(self.xp.float32))
 
-            #start_losses = F.bernoulli_nll(target[:, 0, 0].astype(self.xp.float32), start_scores)
-            #end_losses = F.bernoulli_nll(target[:, 0, 1].astype(self.xp.float32), end_scores)
+            # start_losses = F.bernoulli_nll(target[:, 0, 0].astype(self.xp.float32), start_scores)
+            # end_losses = F.bernoulli_nll(target[:, 0, 1].astype(self.xp.float32), end_scores)
             start_losses = self.neg_loglikelihood_fun(target[:, 0, 0], start_scores)
             end_losses = self.neg_loglikelihood_fun(target[:, 0, 1], end_scores)
 
@@ -225,6 +246,13 @@ class MReader(chainer.Chain):
             self.rec_loss = rec_loss
             self.loss = rec_loss
 
+            '''
+            # computational graph
+            if (self.args.dot_file is not None) and os.path.exists(self.args.dot_file) is False:
+                g = CG.build_computational_graph((self.rec_loss,))
+                with open(self.args.dot_file, 'w') as f:
+                    f.write(g.dump())
+            '''
             chainer.report(
                 {'rec_loss': rec_loss, 'loss': self.loss}, observer=self)
             return self.loss
@@ -238,8 +266,51 @@ class MReader(chainer.Chain):
         batch_size, _ = distribution.shape
 
         for i in six.moves.range(batch_size):
-
             sum += -F.log(distribution.data[i][target[i]])
 
         return sum
 
+    '''
+    def get_evaluation_fun(self):
+
+        def evaluate_func(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, target, d_text):
+
+            # eval_time = utils.Timer()
+            # f1 = AverageMeter()
+            # exact_match = AverageMeter()
+
+            # Run through examples
+            start_scores, end_scores = self.forward(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask)
+
+            size = len(start_scores)
+
+            pbar = ProgressBar()
+            for i, (s, e) in pbar(enumerate(zip(start_scores, end_scores))):
+                pred_s = F.argmax(s)
+                pred_e = F.argmax(e)
+
+                start_p = pred_s.data
+                end_p = pred_e.data
+
+                if start_p > end_p:
+                    self.exact_match.update(0)
+                    self.f1.update(0)
+                    continue
+
+                # prediction = c[i][start_p:end_p]
+                prediction = ' '.join(d_text[i][start_p:end_p])
+                ground_truths = []
+                for truth in target[i]:
+                    # ground_truths.extend(c[i][truth[0]:truth[1]])
+                    ground_truths.append(''.join(d_text[i][truth[0]:truth[1]]))
+
+                self.exact_match.update(metric_max_over_ground_truths(
+                    exact_match_score, prediction, ground_truths))
+                self.f1.update(metric_max_over_ground_truths(
+                    f1_score, prediction, ground_truths))
+
+            chainer.report({"validation/main/f1": self.f1.avg, "validation/main/em": self.exact_match.avg},
+                           observer=self)
+
+        return evaluate_func
+    '''

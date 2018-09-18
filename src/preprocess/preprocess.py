@@ -104,7 +104,7 @@ def find_answer_n(offsets, begin_offset, end_offset):
         return start, end
 
 
-def process_dataset(data, tokenizer, workers=None):
+def process_dataset(data, tokenizer, workers=None, max_num_answers=1):
     """Iterate processing (tokenize, parse, etc) dataset multithreaded."""
     make_pool = partial(Pool, workers, initializer=init)
 
@@ -117,6 +117,9 @@ def process_dataset(data, tokenizer, workers=None):
     c_tokens = workers.map(tokenize, data['contexts'])
     workers.close()
     workers.join()
+
+    # test max_num_answer
+    # max_ans = 0
 
     for idx in range(len(data['qids'])):
         question = q_tokens[idx]['words']
@@ -163,6 +166,9 @@ def process_dataset(data, tokenizer, workers=None):
         cner = c_tokens[data['qid2cid'][idx]]['ner']
 
         ans_tokens = []
+        # add ground truth
+        ans_texts = []
+
         if len(data['answers']) > 0:
             for ans in data['answers'][idx]:
                 # offset could stopped inside a word
@@ -183,6 +189,27 @@ def process_dataset(data, tokenizer, workers=None):
                                       ans['answer_start'] + len(ans['text']))
                 if found:
                     ans_tokens.append(found)
+                    # add ground truth
+                    ans_texts.append(ans['text'])
+
+            # for keeping same dimension
+            ans_len = len(ans_texts)
+
+            '''
+            # test max_num_answer
+            if ans_len > max_ans:
+                max_ans = ans_len
+                print(max_ans)
+            '''
+
+            assert (len(ans_texts) == len(ans_tokens))
+            while ans_len < max_num_answers:
+                if ans_len > 0:
+                    ans_tokens.append(ans_tokens[0])
+                    ans_texts.append(ans_texts[0])
+                    ans_len += 1
+                else:
+                    break
 
         yield {
             'id': data['qids'][idx],
@@ -202,6 +229,7 @@ def process_dataset(data, tokenizer, workers=None):
             'document_char_lower': document_char_lower,
             'question_lower': question_lower,
             'document_lower': document_lower,
+            'answers_text': ans_texts,
         }
 
 
@@ -216,6 +244,7 @@ parser.add_argument('out_dir', type=str, help='Path to output file dir')
 parser.add_argument('--split', type=str, help='Filename for train/dev split')
 parser.add_argument('--num-workers', type=int, default=1)
 parser.add_argument('--tokenizer', type=str, default='spacy')
+parser.add_argument('--max-num-answers', type=int, default=1)
 args = parser.parse_args()
 
 t0 = time.time()
@@ -229,6 +258,7 @@ out_file = os.path.join(
 )
 print('Will write to file %s' % out_file, file=sys.stderr)
 with open(out_file, 'w') as f:
-    for ex in process_dataset(dataset, args.tokenizer, args.num_workers):
+    # for ex in process_dataset(dataset, args.tokenizer, args.num_workers):
+    for ex in process_dataset(dataset, args.tokenizer, args.num_workers, args.max_num_answers):
         f.write(json.dumps(ex) + '\n')
 print('Total time: %.4f (s)' % (time.time() - t0))

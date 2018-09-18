@@ -15,6 +15,7 @@ import argparse
 import random
 
 from utils import *
+from mreader_evaluate import *
 
 # Defaults
 DATA_DIR = os.path.join('data', 'datasets')
@@ -225,6 +226,17 @@ def main():
         train_data = train_data[:128]
         dev_data = dev_data[:128]
 
+    # debug
+    train_size = int(len(train_data) * 0.005)
+    print(train_size)
+
+    train_data = train_data[:train_size]
+
+    dev_size = int(len(dev_data) * 0.05)
+    print(dev_size)
+
+    dev_data = dev_data[:dev_size]
+
     all_data = train_data + dev_data
 
     args.pos_size = DataUtils.transform_pos_feature(all_data)
@@ -242,8 +254,8 @@ def main():
     DataUtils.cal_mask(dev_data, args.context_max_length, max_question_len)
 
     ##
-    pretrain_embedding_file = os.path.join(args.embed_dir, "pretrain_embedding")
-    pretrain_index_file = os.path.join(args.embed_dir, "pretrain_index_file.txt")
+    pretrain_embedding_file = os.path.join(args.embed_dir, "pretrain_embedding_n2")
+    pretrain_index_file = os.path.join(args.embed_dir, "pretrain_index_file_n2.txt")
     # args.w_embeddings = DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim)
     args.w_embeddings = DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim,
                                                  pretrained_embedding_file=pretrain_embedding_file,
@@ -255,8 +267,8 @@ def main():
     if DataUtils.IS_DEBUG:
         print("load_embedding : finished...")
 
-    pretrain_char_embedding_file = os.path.join(args.embed_dir, "pretrain_char_embedding")
-    pretrain_char_index_file = os.path.join(args.embed_dir, "pretrain_char_index_file.txt")
+    pretrain_char_embedding_file = os.path.join(args.embed_dir, "pretrain_char_embedding_n2")
+    pretrain_char_index_file = os.path.join(args.embed_dir, "pretrain_char_index_file_n2.txt")
 
     args.char_embeddings = DataUtils.load_char_embedding(all_data, args.char_embedding_file, args.char_embedding_dim,
                                                          pretrained_embedding_file=pretrain_char_embedding_file,
@@ -275,11 +287,14 @@ def main():
     # dev_data = tuple_dataset.TupleDataset(dev_data)
 
     train_data = chainer.datasets.TransformDataset(train_data, DataUtils.convert_item)
-    dev_data = chainer.datasets.TransformDataset(dev_data, DataUtils.convert_item)
+    # dev_data = chainer.datasets.TransformDataset(dev_data, DataUtils.convert_item_dev)
 
     # because of memory
     args.batch_size = 16
     args.num_features = 4
+
+    # cg
+    args.dot_file = "cg_f.dot"
 
     model = MReader(args)
 
@@ -291,20 +306,39 @@ def main():
     optimizer.setup(model)
 
     train_iter = chainer.iterators.SerialIterator(train_data, args.batch_size)
+    validation_iter = chainer.iterators.SerialIterator(dev_data, args.batch_size, repeat=False, shuffle=False)
+
     updater = training.StandardUpdater(
         train_iter, optimizer, loss_func=model.get_loss_function(),
         device=args.gpu
     )
     trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
+    # trainer.extend(extensions.Evaluator(validation_iter, model, device=args.gpu, eval_func=model.get_evaluation_fun()))
+    trainer.extend(
+        MReaderEvaluator(
+            model, dev_data, device=args.gpu,
+            f1_key='validation/main/f1', em_key='validation/main/em', batch_size=args.batch_size, dot_file = 'cg_n.dot'
+        )
+    )
+
     trainer.extend(
         extensions.LogReport(trigger=(args.log_interval, 'iteration'))
     )
+
+    '''
     trainer.extend(
         extensions.PrintReport(
-            ['epoch', 'iteration', 'main/loss',
+            ['epoch', 'iteration', 'main/loss', 'validation/main/f1', 'validation/main/em',
              'elapsed_time']
         ),
         trigger=(args.log_interval, 'iteration')
+    )
+    '''
+    trainer.extend(
+        extensions.PrintReport(
+            ['epoch', 'iteration', 'main/loss', 'validation/main/f1', 'validation/main/em',
+             'elapsed_time']
+        )
     )
 
     print('start training')
