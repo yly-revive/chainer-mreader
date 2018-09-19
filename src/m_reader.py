@@ -240,33 +240,39 @@ class MReader(chainer.Chain):
             # start_losses = F.bernoulli_nll(target[:, 0, 0].astype(self.xp.float32), start_scores)
             # end_losses = F.bernoulli_nll(target[:, 0, 1].astype(self.xp.float32), end_scores)
             start_losses = self.neg_loglikelihood_fun(target[:, 0, 0], start_scores)
-            end_losses = self.neg_loglikelihood_fun(target[:, 0, 1], end_scores)
+
+            end_losses = self.neg_loglikelihood_fun(target[:, 0, 1], end_scores, c_mask)
 
             rec_loss = start_losses + end_losses
             self.rec_loss = rec_loss
             self.loss = rec_loss
 
-            '''
+            ''''''
             # computational graph
             if (self.args.dot_file is not None) and os.path.exists(self.args.dot_file) is False:
                 g = CG.build_computational_graph((self.rec_loss,))
                 with open(self.args.dot_file, 'w') as f:
                     f.write(g.dump())
-            '''
+
             chainer.report(
                 {'rec_loss': rec_loss, 'loss': self.loss}, observer=self)
             return self.loss
 
         return loss_f
 
-    def neg_loglikelihood_fun(self, target, distribution):
+    def neg_loglikelihood_fun(self, target, distribution, mask=None):
 
         sum = 0
 
         batch_size, _ = distribution.shape
 
         for i in six.moves.range(batch_size):
-            sum += -F.log(distribution.data[i][target[i]])
+            # if (len(distribution))
+            if distribution[i][target[i]].data <= 0:
+                if mask is not None:
+                    m_sum = self.xp.sum(mask[i])
+                    print("index:{}, target[i]:{}, len:{}".format(i, target[i], m_sum))
+            sum += -F.log(distribution[i][target[i]])
 
         return sum
 

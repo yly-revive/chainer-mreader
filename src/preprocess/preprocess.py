@@ -98,6 +98,8 @@ def find_answer_n(offsets, begin_offset, end_offset):
 
         if tok[1] >= end_offset:
             end = i
+            if start == -1:
+                start = i
             break
 
     if start >= 0 and end >= 0:
@@ -238,27 +240,28 @@ def process_dataset(data, tokenizer, workers=None, max_num_answers=1):
 # -----------------------------------------------------------------------------
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument('data_dir', type=str, help='Path to SQuAD data directory')
-parser.add_argument('out_dir', type=str, help='Path to output file dir')
-parser.add_argument('--split', type=str, help='Filename for train/dev split')
-parser.add_argument('--num-workers', type=int, default=1)
-parser.add_argument('--tokenizer', type=str, default='spacy')
-parser.add_argument('--max-num-answers', type=int, default=1)
-args = parser.parse_args()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('data_dir', type=str, help='Path to SQuAD data directory')
+    parser.add_argument('out_dir', type=str, help='Path to output file dir')
+    parser.add_argument('--split', type=str, help='Filename for train/dev split')
+    parser.add_argument('--num-workers', type=int, default=1)
+    parser.add_argument('--tokenizer', type=str, default='spacy')
+    parser.add_argument('--max-num-answers', type=int, default=1)
+    args = parser.parse_args()
 
-t0 = time.time()
+    t0 = time.time()
 
-in_file = os.path.join(args.data_dir, args.split + '.json')
-print('Loading dataset %s' % in_file, file=sys.stderr)
-dataset = load_dataset(in_file)
+    in_file = os.path.join(args.data_dir, args.split + '.json')
+    print('Loading dataset %s' % in_file, file=sys.stderr)
+    dataset = load_dataset(in_file)
 
-out_file = os.path.join(
-    args.out_dir, '%s-processed-%s.txt' % (args.split, args.tokenizer)
-)
-print('Will write to file %s' % out_file, file=sys.stderr)
-with open(out_file, 'w') as f:
-    # for ex in process_dataset(dataset, args.tokenizer, args.num_workers):
-    for ex in process_dataset(dataset, args.tokenizer, args.num_workers, args.max_num_answers):
-        f.write(json.dumps(ex) + '\n')
-print('Total time: %.4f (s)' % (time.time() - t0))
+    out_file = os.path.join(
+        args.out_dir, '%s-processed-%s.txt' % (args.split, args.tokenizer)
+    )
+    print('Will write to file %s' % out_file, file=sys.stderr)
+    with open(out_file, 'w') as f:
+        # for ex in process_dataset(dataset, args.tokenizer, args.num_workers):
+        for ex in process_dataset(dataset, args.tokenizer, args.num_workers, args.max_num_answers):
+            f.write(json.dumps(ex) + '\n')
+    print('Total time: %.4f (s)' % (time.time() - t0))

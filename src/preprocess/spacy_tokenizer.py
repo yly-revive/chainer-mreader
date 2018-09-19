@@ -162,6 +162,9 @@ class SpacyTokenizer(object):
     def tokenize(self, text):
         # We don't treat new lines as tokens.
         clean_text = text.replace('\n', ' ')
+        # remove first space and last space
+        clean_text = clean_text.strip()
+
         tokens = self.nlp(clean_text)
 
         data = []

@@ -585,6 +585,10 @@ class DataUtils(object):
         ret += (np.asarray(q_mask, dtype=int),)
         ret += (target,)
 
+        # debug
+        if target[0][1] == 216:
+            print(item['document'])
+
         if len(item['answers']) == 0:
             print("id:\n")
             print(item["id"])

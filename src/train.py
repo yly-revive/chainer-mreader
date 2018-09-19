@@ -227,12 +227,14 @@ def main():
         dev_data = dev_data[:128]
 
     # debug
-    train_size = int(len(train_data) * 0.005)
+    # train_size = int(len(train_data) * 0.005)
+    train_size = int(len(train_data) * 0.1)
     print(train_size)
 
     train_data = train_data[:train_size]
 
-    dev_size = int(len(dev_data) * 0.05)
+    # dev_size = int(len(dev_data) * 0.05)
+    dev_size = int(len(dev_data) * 0.5)
     print(dev_size)
 
     dev_data = dev_data[:dev_size]
@@ -254,26 +256,26 @@ def main():
     DataUtils.cal_mask(dev_data, args.context_max_length, max_question_len)
 
     ##
-    pretrain_embedding_file = os.path.join(args.embed_dir, "pretrain_embedding_n2")
-    pretrain_index_file = os.path.join(args.embed_dir, "pretrain_index_file_n2.txt")
+    pretrain_embedding_file = os.path.join(args.embed_dir, "pretrain_embedding_n_2")
+    pretrain_index_file = os.path.join(args.embed_dir, "pretrain_index_file_n_2.txt")
     # args.w_embeddings = DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim)
     args.w_embeddings = DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim,
                                                  pretrained_embedding_file=pretrain_embedding_file,
                                                  pretrained_index_file=pretrain_index_file,
-                                                 overwrite=False)
+                                                 overwrite=True)
 
     # args.w_embeddings = object()
     # DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim, args.w_embeddings)
     if DataUtils.IS_DEBUG:
         print("load_embedding : finished...")
 
-    pretrain_char_embedding_file = os.path.join(args.embed_dir, "pretrain_char_embedding_n2")
-    pretrain_char_index_file = os.path.join(args.embed_dir, "pretrain_char_index_file_n2.txt")
+    pretrain_char_embedding_file = os.path.join(args.embed_dir, "pretrain_char_embedding_n_2")
+    pretrain_char_index_file = os.path.join(args.embed_dir, "pretrain_char_index_file_n_2.txt")
 
     args.char_embeddings = DataUtils.load_char_embedding(all_data, args.char_embedding_file, args.char_embedding_dim,
                                                          pretrained_embedding_file=pretrain_char_embedding_file,
                                                          pretrained_index_file=pretrain_char_index_file,
-                                                         overwrite=False)
+                                                         overwrite=True)
 
     args.vocab_size = len(DataUtils.word_dict)
     args.char_size = len(DataUtils.char_dict)
@@ -294,7 +296,7 @@ def main():
     args.num_features = 4
 
     # cg
-    args.dot_file = "cg_f.dot"
+    args.dot_file = "cg_f__.dot"
 
     model = MReader(args)
 
@@ -317,7 +319,7 @@ def main():
     trainer.extend(
         MReaderEvaluator(
             model, dev_data, device=args.gpu,
-            f1_key='validation/main/f1', em_key='validation/main/em', batch_size=args.batch_size, dot_file = 'cg_n.dot'
+            f1_key='validation/main/f1', em_key='validation/main/em', batch_size=args.batch_size, dot_file='cg_n.dot'
         )
     )
 

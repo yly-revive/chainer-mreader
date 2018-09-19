@@ -8,8 +8,10 @@ import six
 
 class SFU(chainer.Chain):
 
-    def __init__(self, input_size, fusion_size):
+    def __init__(self, input_size, fusion_size, fusion_type=0):
         super(SFU, self).__init__()
+
+        self.fusion_type = fusion_type
 
         with self.init_scope():
             self.linear_r = L.Linear(input_size + fusion_size, input_size)
@@ -34,7 +36,11 @@ class SFU(chainer.Chain):
         # for linear link, reshape (batch_size, seq_len, hidden_size) -> (batch_size*seq_len, hidden_size)
         batch_size, seq_len, hidden_size = r_f.shape
         r_f = F.reshape(r_f, (batch_size * seq_len, hidden_size))
-        r = F.tanh(self.linear_r(r_f))
+
+        # add activation function selection 0:tanh 1:gelu
+        # r = F.tanh(self.linear_r(r_f))
+        r = F.tanh(self.linear_r(r_f)) if self.fusion_type == 0 else self.gelu(self.linear_r(r_f))
+
         g = F.sigmoid(self.linear_g(r_f))
 
         # reshape r for calculation
@@ -49,6 +55,9 @@ class SFU(chainer.Chain):
         # o = F.reshape(o, (batch_size, seq_len, hidden_size))
 
         return o
+
+    def gelu(self, x):
+        return 0.5 * x * (1 + F.tanh(F.sqrt(2 / self.xp.pi) * (x + 0.044715 * F.pow(x, 3))))
 
 
 class InteractiveAligner(chainer.Chain):

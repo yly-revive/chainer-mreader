@@ -8,6 +8,7 @@ from chainer.dataset import convert
 import os
 import chainer.computational_graph as c
 
+
 class MReaderEvaluator(chainer.training.Extension):
     trigger = 1, 'epoch'
     priority = chainer.training.PRIORITY_WRITER
@@ -46,11 +47,13 @@ class MReaderEvaluator(chainer.training.Extension):
                 # input_item_gpu = cuda.to_gpu(input_item, self.device)
                 pred_s, pred_e = self.model.forward(*input_item_gpu)
 
+                '''
                 # computational graph
                 if (self.dot_file is not None) and os.path.exists(self.dot_file) is False:
                     g = c.build_computational_graph([pred_s, pred_e])
                     with open(self.dot_file, 'w') as f:
                         f.write(g.dump())
+                '''
 
                 for j, (s, e) in enumerate(zip(pred_s, pred_e)):
                     max_s = F.argmax(s)
