@@ -586,8 +586,8 @@ class DataUtils(object):
         ret += (target,)
 
         # debug
-        if target[0][1] == 216:
-            print(item['document'])
+        # if target[0][1] == 216:
+        #    print(item['document'])
 
         if len(item['answers']) == 0:
             print("id:\n")

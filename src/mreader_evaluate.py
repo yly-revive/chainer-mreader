@@ -39,7 +39,7 @@ class MReaderEvaluator(chainer.training.Extension):
                 data_size = self.batch_size if (i + self.batch_size <= len(self.test_data) - 1) else (
                         len(self.test_data) - i)
                 for j in six.moves.range(data_size):
-                    item = DataUtils.convert_item_dev(self.test_data[j])
+                    item = DataUtils.convert_item_dev(self.test_data[i + j])
                     input_item = item[:-2]
                     batch.append(input_item)
 
@@ -56,6 +56,11 @@ class MReaderEvaluator(chainer.training.Extension):
                 '''
 
                 for j, (s, e) in enumerate(zip(pred_s, pred_e)):
+
+                    max_s = 0
+                    max_e = 0
+                    '''
+                    # deal with s > e
                     max_s = F.argmax(s)
                     max_e = F.argmax(e)
 
@@ -66,9 +71,28 @@ class MReaderEvaluator(chainer.training.Extension):
                         exact_match.update(0)
                         f1.update(0)
                         continue
+                    '''
+                    max_val = 0
+                    # argmax_j1 = 0
+                    start = cuda.to_cpu(s.data)
+                    end = cuda.to_cpu(e.data)
+                    for k in six.moves.range(len(start)):
+
+                        val1 = start[max_s]
+                        if start[k] > val1:
+                            val1 = start[k]
+                            max_s = k
+
+                        val2 = end[k]
+                        if val1 * val2 > max_val:
+                            max_e = k
+                            max_val = val1 * val2
+
+                    start_p = max_s
+                    end_p = max_e
 
                     text = self.test_data[i + j]['document']
-                    prediction = ' '.join(text[start_p:end_p])
+                    prediction = ' '.join(text[start_p:end_p + 1])
 
                     ground_truths = self.test_data[i + j]['answers_text']
                     '''

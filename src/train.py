@@ -227,13 +227,16 @@ def main():
         dev_data = dev_data[:128]
 
     # debug
-    # train_size = int(len(train_data) * 0.005)
-    train_size = int(len(train_data) * 0.1)
+    #train_size = int(len(train_data) * 0.005)
+    # train_size = int(len(train_data) * 0.1)
+    train_size = int(len(train_data) * 0.2)
+    # train_size = len(train_data)
     print(train_size)
 
     train_data = train_data[:train_size]
 
     # dev_size = int(len(dev_data) * 0.05)
+    # dev_size = len(dev_data)
     dev_size = int(len(dev_data) * 0.5)
     print(dev_size)
 
@@ -288,12 +291,13 @@ def main():
     # train_data = tuple_dataset.TupleDataset(train_data)
     # dev_data = tuple_dataset.TupleDataset(dev_data)
 
-    train_data = chainer.datasets.TransformDataset(train_data, DataUtils.convert_item)
+    train_data_input = chainer.datasets.TransformDataset(train_data, DataUtils.convert_item)
     # dev_data = chainer.datasets.TransformDataset(dev_data, DataUtils.convert_item_dev)
 
     # because of memory
     args.batch_size = 16
     args.num_features = 4
+    args.num_epochs = 100
 
     # cg
     args.dot_file = "cg_f__.dot"
@@ -307,7 +311,7 @@ def main():
     optimizer = chainer.optimizers.Adam()
     optimizer.setup(model)
 
-    train_iter = chainer.iterators.SerialIterator(train_data, args.batch_size)
+    train_iter = chainer.iterators.SerialIterator(train_data_input, args.batch_size)
     validation_iter = chainer.iterators.SerialIterator(dev_data, args.batch_size, repeat=False, shuffle=False)
 
     updater = training.StandardUpdater(
@@ -316,6 +320,14 @@ def main():
     )
     trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
     # trainer.extend(extensions.Evaluator(validation_iter, model, device=args.gpu, eval_func=model.get_evaluation_fun()))
+    '''
+    trainer.extend(
+        MReaderEvaluator(
+            model, dev_data, device=args.gpu,
+            f1_key='validation/main/f1', em_key='validation/main/em', batch_size=args.batch_size, dot_file='cg_n.dot'
+        )
+    )
+    '''
     trainer.extend(
         MReaderEvaluator(
             model, dev_data, device=args.gpu,
@@ -324,10 +336,13 @@ def main():
     )
 
     trainer.extend(
+        extensions.LogReport()
+    )
+    '''
+    trainer.extend(
         extensions.LogReport(trigger=(args.log_interval, 'iteration'))
     )
-
-    '''
+    
     trainer.extend(
         extensions.PrintReport(
             ['epoch', 'iteration', 'main/loss', 'validation/main/f1', 'validation/main/em',
@@ -336,12 +351,23 @@ def main():
         trigger=(args.log_interval, 'iteration')
     )
     '''
+
+    '''
     trainer.extend(
         extensions.PrintReport(
             ['epoch', 'iteration', 'main/loss', 'validation/main/f1', 'validation/main/em',
              'elapsed_time']
         )
     )
+    '''
+    trainer.extend(
+        extensions.PrintReport(
+            ['epoch', 'main/loss', 'validation/main/f1', 'validation/main/em',
+             'elapsed_time']
+        )
+    )
+
+    trainer.extend(extensions.ProgressBar())
 
     print('start training')
     trainer.run()
