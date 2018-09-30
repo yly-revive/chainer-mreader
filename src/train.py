@@ -4,6 +4,8 @@ import numpy as np
 import chainer
 from chainer import training
 from chainer.training import extensions
+
+from chainer.training import triggers
 from chainer import reporter
 from chainer.datasets import tuple_dataset
 import os
@@ -227,17 +229,17 @@ def main():
         dev_data = dev_data[:128]
 
     # debug
-    #train_size = int(len(train_data) * 0.005)
+    # train_size = int(len(train_data) * 0.005)
     # train_size = int(len(train_data) * 0.1)
-    train_size = int(len(train_data) * 0.2)
-    # train_size = len(train_data)
+    # train_size = int(len(train_data) * 0.7)
+    train_size = len(train_data)
     print(train_size)
 
     train_data = train_data[:train_size]
 
     # dev_size = int(len(dev_data) * 0.05)
-    # dev_size = len(dev_data)
-    dev_size = int(len(dev_data) * 0.5)
+    dev_size = len(dev_data)
+    # dev_size = int(len(dev_data) * 0.5)
     print(dev_size)
 
     dev_data = dev_data[:dev_size]
@@ -259,26 +261,26 @@ def main():
     DataUtils.cal_mask(dev_data, args.context_max_length, max_question_len)
 
     ##
-    pretrain_embedding_file = os.path.join(args.embed_dir, "pretrain_embedding_n_2")
-    pretrain_index_file = os.path.join(args.embed_dir, "pretrain_index_file_n_2.txt")
+    pretrain_embedding_file = os.path.join(args.embed_dir, "pretrain_embedding_n_2_a")
+    pretrain_index_file = os.path.join(args.embed_dir, "pretrain_index_file_n_2_a.txt")
     # args.w_embeddings = DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim)
     args.w_embeddings = DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim,
                                                  pretrained_embedding_file=pretrain_embedding_file,
                                                  pretrained_index_file=pretrain_index_file,
-                                                 overwrite=True)
+                                                 overwrite=False)
 
     # args.w_embeddings = object()
     # DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim, args.w_embeddings)
     if DataUtils.IS_DEBUG:
         print("load_embedding : finished...")
 
-    pretrain_char_embedding_file = os.path.join(args.embed_dir, "pretrain_char_embedding_n_2")
-    pretrain_char_index_file = os.path.join(args.embed_dir, "pretrain_char_index_file_n_2.txt")
+    pretrain_char_embedding_file = os.path.join(args.embed_dir, "pretrain_char_embedding_n_2_a")
+    pretrain_char_index_file = os.path.join(args.embed_dir, "pretrain_char_index_file_n_2_a.txt")
 
     args.char_embeddings = DataUtils.load_char_embedding(all_data, args.char_embedding_file, args.char_embedding_dim,
                                                          pretrained_embedding_file=pretrain_char_embedding_file,
                                                          pretrained_index_file=pretrain_char_index_file,
-                                                         overwrite=True)
+                                                         overwrite=False)
 
     args.vocab_size = len(DataUtils.word_dict)
     args.char_size = len(DataUtils.char_dict)
@@ -296,6 +298,7 @@ def main():
 
     # because of memory
     args.batch_size = 16
+    # args.batch_size = 8
     args.num_features = 4
     args.num_epochs = 100
 
@@ -318,7 +321,17 @@ def main():
         train_iter, optimizer, loss_func=model.get_loss_function(),
         device=args.gpu
     )
-    trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
+
+    earlystop_trigger = triggers.EarlyStoppingTrigger(monitor='main/loss', patients=5,
+                                                      max_trigger=(args.num_epochs, 'epoch'))
+
+    # trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
+    trainer = training.Trainer(updater, earlystop_trigger)
+
+    trainer.extend(
+        extensions.snapshot_object(model, 'best_model'),
+        trigger=chainer.training.triggers.MinValueTrigger('main/loss')
+    )
     # trainer.extend(extensions.Evaluator(validation_iter, model, device=args.gpu, eval_func=model.get_evaluation_fun()))
     '''
     trainer.extend(
@@ -327,7 +340,12 @@ def main():
             f1_key='validation/main/f1', em_key='validation/main/em', batch_size=args.batch_size, dot_file='cg_n.dot'
         )
     )
+    
     '''
+
+    # computational graph 2nd way
+    trainer.extend(extensions.dump_graph(root_name="main/loss", out_name="cg.dot"))
+
     trainer.extend(
         MReaderEvaluator(
             model, dev_data, device=args.gpu,
@@ -342,7 +360,9 @@ def main():
     trainer.extend(
         extensions.LogReport(trigger=(args.log_interval, 'iteration'))
     )
-    
+    '''
+
+    '''
     trainer.extend(
         extensions.PrintReport(
             ['epoch', 'iteration', 'main/loss', 'validation/main/f1', 'validation/main/em',
@@ -367,7 +387,7 @@ def main():
         )
     )
 
-    trainer.extend(extensions.ProgressBar())
+    # trainer.extend(extensions.ProgressBar())
 
     print('start training')
     trainer.run()

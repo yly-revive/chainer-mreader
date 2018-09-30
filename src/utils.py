@@ -99,7 +99,21 @@ class DataUtils(object):
             # return json_list
 
             # debug
-            json_list_ret = [json_item for json_item in json_list if len(json_item["answers"]) > 0]
+            # json_list_ret = [json_item for json_item in json_list if len(json_item["answers"]) > 0 ]
+            json_list_ret = []
+
+            for json_item in json_list:
+                if len(json_item["answers"]) > 0:
+                    delete = False
+                    for answer in json_item["answers"]:
+                        if answer[1] >= 300:
+                            delete = True
+                            break
+                    if delete:
+                        continue
+                    else:
+                        json_item["document"] = json_item["document"][:300]
+                        json_list_ret.append(json_item)
 
             return json_list_ret
 
@@ -549,6 +563,8 @@ class DataUtils(object):
 
         d_char = np.ones((DataUtils.MAX_DOC_LENGTH, DataUtils.MAX_CHAR_PER_WORD), dtype=int) * (-1)
         for i, word_level in enumerate(item['document_char']):
+            if i >= 300:
+                break
             for j, char_item in enumerate(word_level):
                 d_char[i][j] = DataUtils.char_dict[char_item.lower()]
 
@@ -585,6 +601,12 @@ class DataUtils(object):
         ret += (np.asarray(q_mask, dtype=int),)
         ret += (target,)
 
+        # debug
+        m_sum = np.sum(np.asarray(d_mask, dtype=np.int32))
+        for t in target:
+            if m_sum <= t[0] or m_sum <= t[1]:
+                print("m_sum={}, target[0]:{},target[1]:{},document={}, question={}", m_sum, t[0], t[1],
+                      " ".join(item["document"]), " ".join(item["question"]))
         # debug
         # if target[0][1] == 216:
         #    print(item['document'])

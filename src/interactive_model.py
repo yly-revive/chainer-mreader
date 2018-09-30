@@ -154,7 +154,7 @@ class InteractiveModel(chainer.Chain):
         s_bar = F.concat([s_slash, s_tri], axis=s_tri.data.ndim - 1)
         q_bar = F.concat([q_slash, q_tri], axis=q_tri.data.ndim - 1)
 
-        y = self.prediction(s_bar, q_bar)
+        y = self.prediction(s_bar, q_bar, c_mask, q_mask)
 
         return y
 
@@ -210,7 +210,8 @@ class PredNet(chainer.Chain):
 
             self.L = L.Linear(None, 2)
 
-    def __call__(self, s, q):
+    def __call__(self, s, q, s_mask, q_mask):
+        """
         s_bar, _, _ = self.pred_bilstm(None, None, s)
 
         s_bar_new = F.concat(s_bar, axis=1)
@@ -218,11 +219,55 @@ class PredNet(chainer.Chain):
         q_bar, _, _ = self.pred_bilstm(None, None, q)
 
         q_bar_new = F.concat(q_bar, axis=1)
+        """
 
+        _, _, s_bar = self.pred_bilstm(None, None, s)  # get list of [seq, dim]
+        s_bar_new = F.stack(s_bar, axis=0)  # turn list to 3d tensor
+
+        _, _, q_bar = self.pred_bilstm(None, None, q)  # get list of [seq, dim]
+        q_bar_new = F.stack(q_bar, axis=0)  # turn list to 3d tensor
         # mean-max pooling
-        # stub
-        # use addition as example
-        summarized_vector = s_bar_new + q_bar_new
+
+        s_sum = F.sum(s_mask, axis=-1)
+        q_sum = F.sum(q_mask, axis=-1)
+
+        s_batch, s_seq = s_mask.shape
+        s_mask_broad = F.broadcast_to(
+            F.reshape(s_mask,
+                      (s_batch, s_seq, 1)
+                      ),
+            (s_batch, s_seq, s_bar_new.shape[-1])
+        )
+        s_broad = s_bar_new * s_mask_broad
+
+        """
+        s_infinit_matrix = self.xp.ones((s_batch, s_seq, s_bar_new.shape[-1]), dtype=self.xp.float32) * -1 * self.xp.inf
+        s_cond = s_mask_broad.data.astype(self.xp.bool)
+
+        s_broad_max = F.where(s_cond, s_bar_new, s_infinit_matrix)
+        """
+        s_mean = F.average(s_broad, axis=1)  # [batch_size, dim]
+        s_max = F.maxout(
+            F.reshape(s_bar_new,
+                      (s_bar_new.shape[0], s_bar_new.shape[1] * s_bar_new.shape[2])
+                      ),
+            s_bar_new.shape[-1])  # [batch_size, dim]
+
+        q_batch, q_seq = q_mask.shape
+        q_broad = q_bar_new * F.broadcast_to(
+            F.reshape(q_mask,
+                      (q_batch, q_seq, 1)
+                      ),
+            (q_batch, q_seq, q_bar_new.shape[-1])
+        )
+        q_mean = F.average(q_broad, axis=1)  # [batch_size, dim]
+        q_max = F.maxout(
+            F.reshape(q_bar_new,
+                      (q_bar_new.shape[0], q_bar_new.shape[1] * q_bar_new.shape[2])
+                      ),
+            q_bar_new.shape[-1])  # [batch_size, dim]
+
+        summarized_vector = F.concat([s_mean, s_max, q_mean, q_max], axis=1)
 
         s_linear_output = self.gelu(self.L(summarized_vector))
 

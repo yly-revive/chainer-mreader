@@ -111,10 +111,10 @@ class MReader(chainer.Chain):
         # split_q_char_bilstm_input = self.xp.vsplit(q_char_bilstm_input, batch_q_size * max_q_seq_len)
         split_q_char_bilstm_input = F.split_axis(q_char_bilstm_input, batch_q_size * max_q_seq_len, axis=0)
 
-        # [batch_size, seq_len, dims] -> tuple of [seq_len, dims]
+        # [batch_size, seq_len, dims] -> list of [seq_len, dims]
         split_c_char_bilstm_input = [F.squeeze(i) for i in split_c_char_bilstm_input]
 
-        # [batch_size, seq_len, dims] -> tuple of [seq_len, dims]
+        # [batch_size, seq_len, dims] -> list of [seq_len, dims]
         split_q_char_bilstm_input = [F.squeeze(i) for i in split_q_char_bilstm_input]
 
         # c_char_hidden, _, _ = self.char_bilstm(None, None, c_char_emb)

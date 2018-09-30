@@ -83,6 +83,11 @@ class MReaderEvaluator(chainer.training.Extension):
                             val1 = start[k]
                             max_s = k
 
+                            # 20180927 add start
+                            # reset max_val
+                            # max_val = 0
+                            # 20180927 add end
+
                         val2 = end[k]
                         if val1 * val2 > max_val:
                             max_e = k
