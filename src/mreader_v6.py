@@ -4,7 +4,7 @@ from chainer import Parameter
 import chainer.functions as F
 import chainer.links as L
 import six
-from linkers import *
+from linkers_v6 import *
 from evaluation import *
 from progressbar import ProgressBar
 import math
@@ -14,15 +14,28 @@ from collections import Counter
 from chainer.backends import cuda
 
 
-# training configuration:
-# --gpu=0 --hops=2 --ptr-hops=2 --data-dir=../data/datasets --train-file=SQuAD-train-v1.1-processed-spacy.txt --dev-file=SQuAD-dev-v1.1-processed-spacy.txt --embed-dir=../data/embeddings --fine-tune=true --lambda-param=0.01
-class MReader_V3(chainer.Chain):
+class MReader_V6(chainer.Chain):
 
     def __init__(self, args):
-        super(MReader_V3, self).__init__()
+        super(MReader_V6, self).__init__()
 
         with self.init_scope():
             self.args = args
+
+            # gamma
+            self.gamma = Parameter(
+                initializer=self.xp.array([3]).astype('f')
+            )
+
+            # gamma
+            self.sigma_a = Parameter(
+                initializer=self.xp.array([3]).astype('f')
+            )
+
+            # gamma
+            self.sigma_b = Parameter(
+                initializer=self.xp.array([3]).astype('f')
+            )
             # word embedding layer
             self.w_embedding = L.EmbedID(self.args.vocab_size,
                                          self.args.embedding_dim, initialW=self.args.w_embeddings, ignore_label=-1)
@@ -60,19 +73,25 @@ class MReader_V3(chainer.Chain):
 
             context_hidden_size = 2 * args.encoder_hidden_size
 
-            for _ in six.moves.range(args.hops):
+            for i in six.moves.range(args.hops):
                 # Iterative Aligner
-                self.interactive_aligners.append(InteractiveAligner())
-                self.interactive_SFUs.append(SFU(context_hidden_size, 3 * context_hidden_size))
+                self.interactive_aligners.append(InteractiveAligner_V6(dim=self.args.nonlinear_dim))
+                self.interactive_SFUs.append(SFU_V6(context_hidden_size, 3 * context_hidden_size))
 
                 # Self Aligner
-                self.self_aligners.append(SelfAttnAligner())
-                self.self_SFUs.append(SFU(context_hidden_size, 3 * context_hidden_size))
-                self.aggregate_rnns.append(L.NStepBiLSTM(n_layers=1, in_size=context_hidden_size,
-                                                         out_size=args.encoder_hidden_size,
-                                                         dropout=args.encoder_dropout))
+                self.self_aligners.append(SelfAttnAligner_V6(dim=self.args.nonlinear_dim))
+                self.self_SFUs.append(SFU_V6(context_hidden_size, 3 * context_hidden_size))
 
-            self.mem_ans_ptr = MemAnsPtr(self.args)
+                if i < args.hops - 1:
+                    self.aggregate_rnns.append(L.NStepBiLSTM(n_layers=1, in_size=context_hidden_size,
+                                                             out_size=args.encoder_hidden_size,
+                                                             dropout=args.encoder_dropout))
+                else:
+                    self.aggregate_rnns.append(L.NStepBiLSTM(n_layers=1, in_size=context_hidden_size * args.hops,
+                                                             out_size=args.encoder_hidden_size,
+                                                             dropout=args.encoder_dropout))
+
+            self.mem_ans_ptr = MemAnsPtr_V6_Variant(self.args, context_hidden_size, 3 * context_hidden_size)
 
             # self.f1 = AverageMeter()
             # self.exact_match = AverageMeter()
@@ -144,34 +163,41 @@ class MReader_V3(chainer.Chain):
             ## feature embedding
             c_pos_input = self.pos_embedding(c_pos_feat)
             c_ner_input = self.ner_embedding(c_ner_feat)
-            c_qtype_input = self.q_type_embedding(c_qtype_feat)
+
+            # not mentioned in V6
+            # c_qtype_input = self.q_type_embedding(c_qtype_feat)
 
             c_pos_input = F.squeeze(c_pos_input)
             c_ner_input = F.squeeze(c_ner_input)
             # c_em_feat_input = F.squeeze(c_em_feat).data.astype(self.xp.float32)
             c_em_feat_input = c_em_feat.data.astype(self.xp.float32)
-            c_qtype_input = F.squeeze(c_qtype_input)
+            # not mentioned in V6
+            # c_qtype_input = F.squeeze(c_qtype_input)
 
             c_input.append(c_pos_input)
             c_input.append(c_ner_input)
             c_input.append(c_em_feat_input)
-            c_input.append(c_qtype_input)
+            # not mentioned in V6
+            # c_input.append(c_qtype_input)
 
             q_pos_feat, q_ner_feat, q_em_feat, q_qtype_feat = F.split_axis(q_feature, 4, axis=2)
             q_pos_input = self.pos_embedding(q_pos_feat)
             q_ner_input = self.ner_embedding(q_ner_feat)
-            q_qtype_input = self.q_type_embedding(q_qtype_feat)
+            # not mentioned in V6
+            # q_qtype_input = self.q_type_embedding(q_qtype_feat)
 
             q_pos_input = F.squeeze(q_pos_input)
             q_ner_input = F.squeeze(q_ner_input)
             # q_em_feat_input = F.squeeze(q_em_feat).data.astype(self.xp.float32)
             q_em_feat_input = q_em_feat.data.astype(self.xp.float32)
-            q_qtype_input = F.squeeze(q_qtype_input)
+            # not mentioned in V6
+            # q_qtype_input = F.squeeze(q_qtype_input)
 
             q_input.append(q_pos_input)
             q_input.append(q_ner_input)
             q_input.append(q_em_feat_input)
-            q_input.append(q_qtype_input)
+            # not mentioned in V6
+            # q_input.append(q_qtype_input)
 
             # c_input.append(c_feature)
             # q_input.append(q_feature)
@@ -195,35 +221,38 @@ class MReader_V3(chainer.Chain):
         c_check = F.stack(c_check, axis=0)
         question = F.stack(question, axis=0)
 
+        z_mem = []
+
+        e = None
+        b = None
+
+        """"""
         for i in six.moves.range(self.args.hops):
-            '''
-            q_tide, _ = self.interactive_aligners[i].forward(c_check, question, q_mask)
-            
-            c_bar = self.interactive_SFUs[i].forward(c_check,
-                                                     F.concat([q_tide, c_check * q_tide, c_check - q_tide], axis=2))
+            q_tide, e = self.interactive_aligners[i](c_check, question, q_mask, e, b, self.gamma)
+            # q_tide, _ = self.interactive_aligners[i](c_check, question, q_mask, e, b, self.args.gamma)
 
-            c_tide, _ = self.self_aligners[i].forward(c_bar, c_mask)
-            c_hat = self.self_SFUs[i].forward(c_bar, F.concat([c_tide, c_bar * c_tide, c_bar - c_tide], axis=2))
-            # c_check = self.aggregate_rnns[i].forward(c_hat, c_mask)
+            h = self.interactive_SFUs[i](c_check,
+                                         F.concat([q_tide, c_check * q_tide, c_check - q_tide], axis=2))
 
-            # batch to tuple
-            c_hat_input = [F.squeeze(item) for item in c_hat]
-            # _, _, c_check = self.aggregate_rnns[i](None, None, c_hat)
-            _, _, c_check = self.aggregate_rnns[i](None, None, c_hat_input)
-            c_check = F.stack(c_check, axis=0)
-            '''
-            q_tide, _ = self.interactive_aligners[i](c_check, question, q_mask)
+            h_tide, b = self.self_aligners[i](h, c_mask, b_param=b, gamma=self.gamma)
+            # h_tide, _ = self.self_aligners[i](h, c_mask, b_param=b, gamma=self.args.gamma)
 
-            c_bar = self.interactive_SFUs[i](c_check,
-                                             F.concat([q_tide, c_check * q_tide, c_check - q_tide], axis=2))
+            z = self.self_SFUs[i](h, F.concat([h_tide, h * h_tide, h - h_tide], axis=2))
 
-            c_tide, _ = self.self_aligners[i](c_bar, c_mask)
-            c_hat = self.self_SFUs[i](c_bar, F.concat([c_tide, c_bar * c_tide, c_bar - c_tide], axis=2))
-            # c_check = self.aggregate_rnns[i].forward(c_hat, c_mask)
+            z_mem.append(z)
 
             # batch to tuple
-            c_hat_input = [F.squeeze(item) for item in c_hat]
-            # _, _, c_check = self.aggregate_rnns[i](None, None, c_hat)
+            c_hat_input = []
+            if i < self.args.hops - 1:
+                c_hat_input = [F.squeeze(item) for item in z]
+            elif i == self.args.hops - 1:
+                # res_z = F.concat(*z_mem, axis=z.shape[-1])
+                res_z = z_mem[0]
+
+                for j in range(1, len(z_mem)):
+                    res_z = F.concat((res_z, z_mem[j]), axis=-1)
+                c_hat_input = [F.squeeze(item) for item in res_z]
+
             _, _, c_check = self.aggregate_rnns[i](None, None, c_hat_input)
             c_check = F.stack(c_check, axis=0)
 
@@ -347,7 +376,12 @@ class MReader_V3(chainer.Chain):
 
             r_sample = self.f1_score(context[sample_s:sample_e + 1], context[gold[0, 0]: gold[0, 1] + 1])
 
-            rl_loss += -(F.log(start_dis[sample_s]) + F.log(end_dis[sample_e])) * (r_sample - r_baseline)
+            reward = r_sample - r_baseline
+            if reward > 0:
+                # rl_loss += -(F.log(start_dis[sample_s]) + F.log(end_dis[sample_e])) * (r_sample - r_baseline)
+                rl_loss += -(F.log(start_dis[sample_s]) + F.log(end_dis[sample_e])) * reward
+            else:
+                rl_loss += (F.log(start_dis[start_p]) + F.log(end_dis[end_p])) * reward
 
         return rl_loss
 
@@ -381,7 +415,14 @@ class MReader_V3(chainer.Chain):
                                             start_scores, end_scores)
 
             self.rec_loss = mle_loss
-            self.loss = self.args.lambda_param * mle_loss + (1 - self.args.lambda_param) * rl_loss
+            # self.loss = self.args.lambda_param * mle_loss + (1 - self.args.lambda_param) * rl_loss
+            if self.args.fine_tune:
+                self.loss = mle_loss / (2 * F.square(self.sigma_a[0])) \
+                            + rl_loss / (2 * F.square(self.sigma_b[0])) \
+                            + F.log(F.square(self.sigma_a[0])) \
+                            + F.log(F.square(self.sigma_b[0]))
+            else:
+                self.loss = mle_loss
 
             """
             # computational graph
@@ -412,48 +453,3 @@ class MReader_V3(chainer.Chain):
             sum += -F.log(distribution[i][target[i]])
 
         return sum
-
-    '''
-    def get_evaluation_fun(self):
-
-        def evaluate_func(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, target, d_text):
-
-            # eval_time = utils.Timer()
-            # f1 = AverageMeter()
-            # exact_match = AverageMeter()
-
-            # Run through examples
-            start_scores, end_scores = self.forward(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask)
-
-            size = len(start_scores)
-
-            pbar = ProgressBar()
-            for i, (s, e) in pbar(enumerate(zip(start_scores, end_scores))):
-                pred_s = F.argmax(s)
-                pred_e = F.argmax(e)
-
-                start_p = pred_s.data
-                end_p = pred_e.data
-
-                if start_p > end_p:
-                    self.exact_match.update(0)
-                    self.f1.update(0)
-                    continue
-
-                # prediction = c[i][start_p:end_p]
-                prediction = ' '.join(d_text[i][start_p:end_p])
-                ground_truths = []
-                for truth in target[i]:
-                    # ground_truths.extend(c[i][truth[0]:truth[1]])
-                    ground_truths.append(''.join(d_text[i][truth[0]:truth[1]]))
-
-                self.exact_match.update(metric_max_over_ground_truths(
-                    exact_match_score, prediction, ground_truths))
-                self.f1.update(metric_max_over_ground_truths(
-                    f1_score, prediction, ground_truths))
-
-            chainer.report({"validation/main/f1": self.f1.avg, "validation/main/em": self.exact_match.avg},
-                           observer=self)
-
-        return evaluate_func
-    '''

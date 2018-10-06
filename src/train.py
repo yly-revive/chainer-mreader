@@ -12,6 +12,7 @@ import os
 import logging
 
 from m_reader import *
+from mreader_v6 import *
 # from argparse import ArgumentParser
 import argparse
 import random
@@ -62,6 +63,22 @@ def add_train_args(parser):
     runtime.add_argument('--encoder-dropout', type=float, default=0,
                          help='Dropout for lstm encoder')
 
+    runtime.add_argument('--lambda-param', type=float, default=1.0,
+                         help='training weight for mreader and rl')
+
+    # runtime.add_argument('--fine-tune', type=bool, default='false',
+    #                     help='use RL or not')
+    runtime.add_argument('--fine-tune', action="store_true")
+
+    runtime.add_argument('--gamma', type=float, default=0,
+                         help='reattention weight')
+
+    runtime.add_argument('--nonlinear_dim', type=int, default=50,
+                         help='nonlinear transformation')
+
+    runtime.add_argument('--learning-rate', type=float, default=0.0008,
+                         help='learning rate')
+
     # Files
     files = parser.add_argument_group('Filesystem')
     files.add_argument('--model-dir', type=str, default=MODEL_DIR,
@@ -85,7 +102,8 @@ def add_train_args(parser):
     files.add_argument('--embed-dir', type=str, default=EMBED_DIR,
                        help='Directory of pre-trained embedding files')
     files.add_argument('--embedding-file', type=str,
-                       default='glove.840B.300d.txt',
+                       # default='glove.840B.300d.txt',
+                       default='glove.6B.100d.txt',
                        help='Space-separated pretrained embeddings file')
     files.add_argument('--char-embedding-file', type=str,
                        default='glove.840B.300d-char.txt',
@@ -207,6 +225,8 @@ def set_random_seed(seed):
     np.random.seed(seed)
 
 
+# model v3:
+# --gpu=0 --hops=2 --ptr-hops=2 --data-dir=../data/datasets --train-file=SQuAD-train-v1.1-processed-spacy.txt --dev-file=SQuAD-dev-v1.1-processed-spacy.txt --embed-dir=../data/embeddings --fine-tune=false --lambda-param=1 --gamma=3
 def main():
     parser = argparse.ArgumentParser(
         'Reinforced Mnemonic Reader',
@@ -227,22 +247,22 @@ def main():
     if DataUtils.IS_DEBUG:
         train_data = train_data[:128]
         dev_data = dev_data[:128]
+    else:
+        # debug
+        # train_size = int(len(train_data) * 0.005)
+        train_size = int(len(train_data) * 0.3)
+        # train_size = int(len(train_data) * 0.7)
+        # train_size = len(train_data)
+        print(train_size)
 
-    # debug
-    # train_size = int(len(train_data) * 0.005)
-    # train_size = int(len(train_data) * 0.1)
-    # train_size = int(len(train_data) * 0.7)
-    train_size = len(train_data)
-    print(train_size)
+        train_data = train_data[:train_size]
 
-    train_data = train_data[:train_size]
+        # dev_size = int(len(dev_data) * 0.05)
+        # dev_size = len(dev_data)
+        dev_size = int(len(dev_data) * 0.5)
+        print(dev_size)
 
-    # dev_size = int(len(dev_data) * 0.05)
-    dev_size = len(dev_data)
-    # dev_size = int(len(dev_data) * 0.5)
-    print(dev_size)
-
-    dev_data = dev_data[:dev_size]
+        dev_data = dev_data[:dev_size]
 
     all_data = train_data + dev_data
 
@@ -261,8 +281,8 @@ def main():
     DataUtils.cal_mask(dev_data, args.context_max_length, max_question_len)
 
     ##
-    pretrain_embedding_file = os.path.join(args.embed_dir, "pretrain_embedding_n_2_a")
-    pretrain_index_file = os.path.join(args.embed_dir, "pretrain_index_file_n_2_a.txt")
+    pretrain_embedding_file = os.path.join(args.embed_dir, "pretrain_embedding_v6_a_0.3_0.5")
+    pretrain_index_file = os.path.join(args.embed_dir, "pretrain_index_file_v6_0.3_0.5.txt")
     # args.w_embeddings = DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim)
     args.w_embeddings = DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim,
                                                  pretrained_embedding_file=pretrain_embedding_file,
@@ -274,8 +294,8 @@ def main():
     if DataUtils.IS_DEBUG:
         print("load_embedding : finished...")
 
-    pretrain_char_embedding_file = os.path.join(args.embed_dir, "pretrain_char_embedding_n_2_a")
-    pretrain_char_index_file = os.path.join(args.embed_dir, "pretrain_char_index_file_n_2_a.txt")
+    pretrain_char_embedding_file = os.path.join(args.embed_dir, "pretrain_char_embedding_v6_a_0.3_0.5")
+    pretrain_char_index_file = os.path.join(args.embed_dir, "pretrain_char_index_file_v6_a_0.3_0.5.txt")
 
     args.char_embeddings = DataUtils.load_char_embedding(all_data, args.char_embedding_file, args.char_embedding_dim,
                                                          pretrained_embedding_file=pretrain_char_embedding_file,
@@ -297,7 +317,8 @@ def main():
     # dev_data = chainer.datasets.TransformDataset(dev_data, DataUtils.convert_item_dev)
 
     # because of memory
-    args.batch_size = 16
+    args.batch_size = 32
+    # args.batch_size = 16
     # args.batch_size = 8
     args.num_features = 4
     args.num_epochs = 100
@@ -305,13 +326,17 @@ def main():
     # cg
     args.dot_file = "cg_f__.dot"
 
-    model = MReader(args)
+    # model = MReader_V3(args)
+    model = MReader_V6(args)
+
+    if args.fine_tune:
+        chainer.serializers.load_npz('result/best_model', model)
 
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu(args.gpu)
 
-    optimizer = chainer.optimizers.Adam()
+    optimizer = chainer.optimizers.Adam(alpha=args.learning_rate)
     optimizer.setup(model)
 
     train_iter = chainer.iterators.SerialIterator(train_data_input, args.batch_size)
@@ -328,8 +353,9 @@ def main():
     # trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
     trainer = training.Trainer(updater, earlystop_trigger)
 
+    save_model_file = "best_model_rl" if args.fine_tune else "best_model"
     trainer.extend(
-        extensions.snapshot_object(model, 'best_model'),
+        extensions.snapshot_object(model, save_model_file),
         trigger=chainer.training.triggers.MinValueTrigger('main/loss')
     )
     # trainer.extend(extensions.Evaluator(validation_iter, model, device=args.gpu, eval_func=model.get_evaluation_fun()))
@@ -361,7 +387,6 @@ def main():
         extensions.LogReport(trigger=(args.log_interval, 'iteration'))
     )
     '''
-
     '''
     trainer.extend(
         extensions.PrintReport(
@@ -382,7 +407,7 @@ def main():
     '''
     trainer.extend(
         extensions.PrintReport(
-            ['epoch', 'main/loss', 'validation/main/f1', 'validation/main/em',
+            ['epoch', 'main/loss', 'main/mle_loss', 'main/rl_loss', 'validation/main/f1', 'validation/main/em',
              'elapsed_time']
         )
     )

@@ -422,7 +422,8 @@ class DataUtils(object):
                 word = vector[0]
                 # pbar.set_description("Processing %s" % word)
                 embedding = vector[1:]
-                assert (len(embedding) == 300)
+                # assert (len(embedding) == 300)
+                assert (len(embedding) == 100)
                 embedding_dict[word.lower()] = embedding
 
         # embedding_matrix = np.zeros((len(word_list)+1, dimension))
