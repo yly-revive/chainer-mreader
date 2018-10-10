@@ -5,6 +5,8 @@ from progressbar import ProgressBar
 # import tqdm
 import os
 
+from bilm import Batcher
+
 '''
 class QuestionType(IntEnum):
     WHAT = 1
@@ -74,8 +76,14 @@ class DataUtils(object):
     MAX_DOC_LENGTH = 0
     MAX_Q_LENGTH = 0
 
+    batcher = None
+
     def __init__(self):
         super(DataUtils, self).__init__()
+
+    @staticmethod
+    def load_elmo_batcher(vocab_file):
+        DataUtils.batcher = Batcher(vocab_file, 50)
 
     @staticmethod
     def load_data(file):
@@ -600,6 +608,19 @@ class DataUtils(object):
         ret += (q_char,)
         ret += (q_feature,)
         ret += (np.asarray(q_mask, dtype=int),)
+
+        # add elmo id
+        context_ids = DataUtils.batcher.batch_sentences([item["document"]], add_bos_eos=False)
+        question_ids = DataUtils.batcher.batch_sentences([item["question"]], add_bos_eos=False)
+
+        c_ids = np.zeros((DataUtils.MAX_DOC_LENGTH, 50), dtype=np.int32)
+        q_ids = np.zeros((DataUtils.MAX_Q_LENGTH, 50), dtype=np.int32)
+        c_ids[:len(context_ids[0]), :] = context_ids[0]
+        q_ids[:len(question_ids[0]), :] = question_ids[0]
+
+        ret += (c_ids,)
+        ret += (q_ids,)
+
         ret += (target,)
 
         # debug

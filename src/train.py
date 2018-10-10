@@ -150,6 +150,13 @@ def add_train_args(parser):
     optimizer_setting.add_argument('--rl-initial-learning-rate', type=float, default=0.001,
                                    help='Initial learning rate for training RL')
 
+    elmo_arg = parser.add_argument_group('Elmo')
+    elmo_arg.add_argument('--vocab-file', type=str, default="", help="precomputed elmo vocab file")
+    elmo_arg.add_argument('--embedding-token-file', type=str, default="",
+                          help="precomputed elmo embedding file (for initialization?)")
+    elmo_arg.add_argument('--options-file', type=str, default="", help="elmo options file")
+    elmo_arg.add_argument('--weight-file', type=str, default="", help="elmo weight file")
+
 
 def set_defaults(args):
     """Make sure the commandline arguments are initialized properly."""
@@ -227,6 +234,7 @@ def set_random_seed(seed):
 
 # model v3:
 # --gpu=0 --hops=2 --ptr-hops=2 --data-dir=../data/datasets --train-file=SQuAD-train-v1.1-processed-spacy.txt --dev-file=SQuAD-dev-v1.1-processed-spacy.txt --embed-dir=../data/embeddings --fine-tune=false --lambda-param=1 --gamma=3
+# --gpu=0 --hops=3 --ptr-hops=2 --data-dir=../data/datasets --train-file=SQuAD-train-v1.1-processed-spacy.txt --dev-file=SQuAD-dev-v1.1-processed-spacy.txt --embed-dir=../data/embeddings --lambda-param=1 --gamma=3  --learning-rate=0.0001 --encoder-dropout=0.3 --fine-tune  --options-file ../../test_elmo/src/elmo-chainer/elmo_2x4096_512_2048cnn_2xhighway_options.json --weight-file ../../test_elmo/src/elmo-chainer/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5
 def main():
     parser = argparse.ArgumentParser(
         'Reinforced Mnemonic Reader',
@@ -249,17 +257,17 @@ def main():
         dev_data = dev_data[:128]
     else:
         # debug
-        # train_size = int(len(train_data) * 0.005)
-        train_size = int(len(train_data) * 0.3)
+        train_size = int(len(train_data) * 0.005)
+        # train_size = int(len(train_data) * 0.3)
         # train_size = int(len(train_data) * 0.7)
         # train_size = len(train_data)
         print(train_size)
 
         train_data = train_data[:train_size]
 
-        # dev_size = int(len(dev_data) * 0.05)
+        dev_size = int(len(dev_data) * 0.05)
         # dev_size = len(dev_data)
-        dev_size = int(len(dev_data) * 0.5)
+        # dev_size = int(len(dev_data) * 0.5)
         print(dev_size)
 
         dev_data = dev_data[:dev_size]
@@ -281,8 +289,8 @@ def main():
     DataUtils.cal_mask(dev_data, args.context_max_length, max_question_len)
 
     ##
-    pretrain_embedding_file = os.path.join(args.embed_dir, "pretrain_embedding_v6_a_0.3_0.5")
-    pretrain_index_file = os.path.join(args.embed_dir, "pretrain_index_file_v6_0.3_0.5.txt")
+    pretrain_embedding_file = os.path.join(args.embed_dir, "pretrain_embedding_v6_a_0.005_0.05")
+    pretrain_index_file = os.path.join(args.embed_dir, "pretrain_index_file_v6_0.005_0.05.txt")
     # args.w_embeddings = DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim)
     args.w_embeddings = DataUtils.load_embedding(all_data, args.embedding_file, args.embedding_dim,
                                                  pretrained_embedding_file=pretrain_embedding_file,
@@ -294,8 +302,8 @@ def main():
     if DataUtils.IS_DEBUG:
         print("load_embedding : finished...")
 
-    pretrain_char_embedding_file = os.path.join(args.embed_dir, "pretrain_char_embedding_v6_a_0.3_0.5")
-    pretrain_char_index_file = os.path.join(args.embed_dir, "pretrain_char_index_file_v6_a_0.3_0.5.txt")
+    pretrain_char_embedding_file = os.path.join(args.embed_dir, "pretrain_char_embedding_v6_a_0.005_0.05")
+    pretrain_char_index_file = os.path.join(args.embed_dir, "pretrain_char_index_file_v6_a_0.005_0.05.txt")
 
     args.char_embeddings = DataUtils.load_char_embedding(all_data, args.char_embedding_file, args.char_embedding_dim,
                                                          pretrained_embedding_file=pretrain_char_embedding_file,
@@ -307,6 +315,9 @@ def main():
 
     print(args.vocab_size)
 
+    # initialize elmo batcher
+    DataUtils.load_elmo_batcher(args.vocab_file)
+
     # train_data = DataUtils.convert_data(train_data, args.context_max_length, max_question_len)
     # dev_data = DataUtils.convert_data(dev_data, args.context_max_length, max_question_len)
 
@@ -317,9 +328,9 @@ def main():
     # dev_data = chainer.datasets.TransformDataset(dev_data, DataUtils.convert_item_dev)
 
     # because of memory
-    args.batch_size = 32
+    # args.batch_size = 32
     # args.batch_size = 16
-    # args.batch_size = 8
+    args.batch_size = 4
     args.num_features = 4
     args.num_epochs = 100
 
@@ -340,23 +351,36 @@ def main():
     optimizer.setup(model)
 
     train_iter = chainer.iterators.SerialIterator(train_data_input, args.batch_size)
-    validation_iter = chainer.iterators.SerialIterator(dev_data, args.batch_size, repeat=False, shuffle=False)
+    #validation_iter = chainer.iterators.SerialIterator(dev_data, args.batch_size, repeat=False, shuffle=False)
 
     updater = training.StandardUpdater(
         train_iter, optimizer, loss_func=model.get_loss_function(),
         device=args.gpu
     )
 
+    """
     earlystop_trigger = triggers.EarlyStoppingTrigger(monitor='main/loss', patients=5,
+                                                      max_trigger=(args.num_epochs, 'epoch'))
+    """
+    monitor = "validation/main/f1" if args.fine_tune else "validation/main/em"
+
+    earlystop_trigger = triggers.EarlyStoppingTrigger(monitor=monitor, patients=5, mode="max",
                                                       max_trigger=(args.num_epochs, 'epoch'))
 
     # trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
     trainer = training.Trainer(updater, earlystop_trigger)
 
     save_model_file = "best_model_rl" if args.fine_tune else "best_model"
+
+    """
     trainer.extend(
         extensions.snapshot_object(model, save_model_file),
         trigger=chainer.training.triggers.MinValueTrigger('main/loss')
+    )
+    """
+    trainer.extend(
+        extensions.snapshot_object(model, save_model_file),
+        trigger=chainer.training.triggers.MaxValueTrigger(monitor)
     )
     # trainer.extend(extensions.Evaluator(validation_iter, model, device=args.gpu, eval_func=model.get_evaluation_fun()))
     '''

@@ -13,6 +13,8 @@ import chainer.computational_graph as CG
 from collections import Counter
 from chainer.backends import cuda
 
+from bilm import Elmo
+
 
 class MReader_V6(chainer.Chain):
 
@@ -21,6 +23,14 @@ class MReader_V6(chainer.Chain):
 
         with self.init_scope():
             self.args = args
+            self.elmo = Elmo(
+                args.options_file,
+                args.weight_file,
+                # num_output_representations=2,
+                num_output_representations=1,
+                requires_grad=False,
+                do_layer_norm=False,
+                dropout=0.)
 
             # gamma
             self.gamma = Parameter(
@@ -60,7 +70,9 @@ class MReader_V6(chainer.Chain):
 
             # encoder
             # encoder_input_size = args.embedding_dim + args.char_hidden_size * 2 + args.num_features
-            encoder_input_size = args.embedding_dim + args.char_hidden_size * 2 + args.pos_size + args.ner_size + args.qtype_size + 1
+
+            # encoder_input_size = args.embedding_dim + args.char_hidden_size * 2 + args.pos_size + args.ner_size + args.qtype_size + 1
+            encoder_input_size = args.embedding_dim + args.char_hidden_size * 2 + args.pos_size + args.ner_size + 1024
             self.encoder_bilstm = L.NStepBiLSTM(n_layers=1, in_size=encoder_input_size,
                                                 out_size=args.encoder_hidden_size, dropout=args.encoder_dropout)
 
@@ -96,7 +108,7 @@ class MReader_V6(chainer.Chain):
             # self.f1 = AverageMeter()
             # self.exact_match = AverageMeter()
 
-    def forward(self, c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask):
+    def forward(self, c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, context_ids, question_ids):
         """Inputs:
         c = document word indices             [batch * len_d]
         c_char = document char indices           [batch * len_d * len_c]
@@ -202,6 +214,28 @@ class MReader_V6(chainer.Chain):
             # c_input.append(c_feature)
             # q_input.append(q_feature)
 
+        ## add elmo
+        '''
+        context_embeddings = self.elmo.forward(context_ids)
+        question_embeddings = self.elmo.forward(question_ids)
+        '''
+        batch_size = context_ids.shape[0]
+        context_max_length = context_ids.shape[1]
+        question_max_length = question_ids.shape[1]
+        context_embeddings = []
+        question_embeddings = []
+        for i in range(batch_size):
+            context_elmo = self.elmo.forward(
+                self.xp.asarray([context_ids[i][:self.xp.sum(c_mask[i])]], dtype=self.xp.int32))
+            context_embeddings.append(F.pad_sequence(context_elmo["elmo_representations"][0],
+                                                     length=context_max_length))
+
+            question_elmo = self.elmo.forward(
+                self.xp.asarray([question_ids[i][:self.xp.sum(q_mask[i])]], dtype=self.xp.int32))
+            question_embeddings.append(F.pad_sequence(question_elmo["elmo_representations"][0],
+                                                      length=question_max_length))
+
+        c_input.append(F.vstack(context_embeddings))
         # Encode context with bi-lstm
         c_input = F.concat(c_input, axis=2)
         c_input_bilstm = [i for i in c_input]
@@ -209,6 +243,7 @@ class MReader_V6(chainer.Chain):
         # _, _, context = self.encoder_bilstm(None, None, F.concat(c_input, axis=2))
         _, _, context = self.encoder_bilstm(None, None, c_input_bilstm)
 
+        q_input.append(F.vstack(question_embeddings))
         # Encode question with bi-lstm
         q_input = F.concat(q_input, axis=2)
         q_input_bilstm = [i for i in q_input]
@@ -367,19 +402,20 @@ class MReader_V6(chainer.Chain):
             # cont_b = context[gold[0]:gold[1] + 1]
 
             r_baseline = self.f1_score(context[start_p:end_p + 1], context[gold[0, 0]:gold[0, 1] + 1])
+
             sample_s = self.sampling_func(start_dis.data)
 
             # end distribution normalization
-            end_sum = self.xp.sum(end_dis.data[start_p:])
-            end_dis_sample = end_dis.data[start_p:] / end_sum
+            end_sum = self.xp.sum(end_dis.data[sample_s:])
+            end_dis_sample = end_dis.data[sample_s:] / end_sum
             sample_e = self.sampling_func(end_dis_sample)
 
-            r_sample = self.f1_score(context[sample_s:sample_e + 1], context[gold[0, 0]: gold[0, 1] + 1])
+            r_sample = self.f1_score(context[sample_s:sample_s + sample_e + 1], context[gold[0, 0]: gold[0, 1] + 1])
 
             reward = r_sample - r_baseline
             if reward > 0:
                 # rl_loss += -(F.log(start_dis[sample_s]) + F.log(end_dis[sample_e])) * (r_sample - r_baseline)
-                rl_loss += -(F.log(start_dis[sample_s]) + F.log(end_dis[sample_e])) * reward
+                rl_loss += -(F.log(start_dis[sample_s]) + F.log(end_dis[sample_s + sample_e])) * reward
             else:
                 rl_loss += (F.log(start_dis[start_p]) + F.log(end_dis[end_p])) * reward
 
@@ -387,7 +423,7 @@ class MReader_V6(chainer.Chain):
 
     def get_loss_function(self):
 
-        def loss_f(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, target):
+        def loss_f(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, context_ids, question_ids, target):
             """
             # rec_loss = 0
             start_scores, end_scores = self.forward(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask)
@@ -405,12 +441,14 @@ class MReader_V6(chainer.Chain):
             """
             rl_loss = 0
 
-            start_scores, end_scores = self.forward(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask)
+            start_scores, end_scores = self.forward(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask,
+                                                    context_ids, question_ids)
 
             mle_loss = self.mle_loss_func(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, target,
                                           start_scores, end_scores)
 
-            if self.args.lambda_param != 1:
+            # if self.args.lambda_param != 1:
+            if self.args.fine_tune:
                 rl_loss = self.rl_loss_func(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, target,
                                             start_scores, end_scores)
 

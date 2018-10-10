@@ -150,11 +150,12 @@ def process_dataset(data, tokenizer, workers=None, max_num_answers=1):
         document = c_tokens[data['qid2cid'][idx]]['words']
 
         # remove strange spaces
-        #document = [word for word in document if word.strip() != '']
+        # document = [word for word in document if word.strip() != '']
+        """
         if data['qids'][idx] == '570aa9644103511400d598f2':
             m = 0
             print(m)
-
+        """
         new_doc = []
         new_offset = []
         for i, word in enumerate(document):
@@ -167,10 +168,10 @@ def process_dataset(data, tokenizer, workers=None, max_num_answers=1):
                 new_doc.append(word)
                 new_offset.append(offsets[i])
 
-        #document = new_doc
+        # document = new_doc
         document = [word for word in new_doc]
         offsets = [offset for offset in new_offset]
-        
+
         document_lower = [i.lower() for i in document]
 
         # c_tokens[data['qid2cid'][idx]]['chars'] only returns the 1st-character of the word
@@ -183,7 +184,7 @@ def process_dataset(data, tokenizer, workers=None, max_num_answers=1):
             document_char.append(char)
             document_char_lower.append([c.lower() for c in d])
 
-        #offsets = c_tokens[data['qid2cid'][idx]]['offsets']
+        # offsets = c_tokens[data['qid2cid'][idx]]['offsets']
         clemma = c_tokens[data['qid2cid'][idx]]['lemma']
         cpos = c_tokens[data['qid2cid'][idx]]['pos']
         cner = c_tokens[data['qid2cid'][idx]]['ner']
