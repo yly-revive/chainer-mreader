@@ -85,7 +85,7 @@ class MReaderEvaluator(chainer.training.Extension):
 
                             # 20180927 add start
                             # reset max_val
-                            # max_val = 0
+                            max_val = 0
                             # 20180927 add end
 
                         val2 = end[k]

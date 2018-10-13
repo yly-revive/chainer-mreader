@@ -156,6 +156,11 @@ def add_train_args(parser):
                           help="precomputed elmo embedding file (for initialization?)")
     elmo_arg.add_argument('--options-file', type=str, default="", help="elmo options file")
     elmo_arg.add_argument('--weight-file', type=str, default="", help="elmo weight file")
+    elmo_arg.add_argument('--use-elmo', action="store_true")
+    elmo_arg.add_argument('--context-elmo-embedding', type=str, default="", help="precomputed elmo document embedding")
+    elmo_arg.add_argument('--question-elmo-embedding', type=str, default="", help="precomputed elmo question embedding")
+    elmo_arg.add_argument('--sentence-mapping-file', type=str, default="", help="precomputed elmo file")
+    elmo_arg.add_argument('--h5py-embedding-file', type=str, default="", help="precomputed elmo file")
 
 
 def set_defaults(args):
@@ -315,8 +320,36 @@ def main():
 
     print(args.vocab_size)
 
-    # initialize elmo batcher
-    DataUtils.load_elmo_batcher(args.vocab_file)
+    if args.use_elmo:
+
+        # add elmo online
+        # initialize elmo batcher
+        DataUtils.load_elmo_batcher(args.vocab_file)
+        """
+        # --gpu=0
+        # --hops=3
+        # --ptr-hops=2
+        # --data-dir=../data/datasets
+        # --train-file=SQuAD-train-v1.1-processed-spacy_n.txt
+        # --dev-file=SQuAD-dev-v1.1-processed-spacy_n.txt
+        # --embed-dir=../data/embeddings
+        # --lambda-param=1
+        # --gamma=3
+        # --learning-rate=0.0008
+        # --encoder-dropout=0
+        # --options-file
+        # ../../test_elmo/src/elmo-chainer/elmo_2x4096_512_2048cnn_2xhighway_options.json
+        # --weight-file
+        # ../../test_elmo/src/elmo-chainer/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5
+        # --vocab-file
+        # ../../test_elmo/src/elmo-chainer/vocab-2016-09-10.txt
+        # --context-elmo-embedding=../data/embeddings/context_embedding.npy
+        # --question-elmo-embedding=../data/embeddings/question_embedding.npy
+        #DataUtils.load_elmo_embedding(args.context_elmo_embedding, args.question_elmo_embedding)
+
+
+        DataUtils.load_elmo_embedding(args.sentence_mapping_file, args.h5py_embedding_file)
+        """
 
     # train_data = DataUtils.convert_data(train_data, args.context_max_length, max_question_len)
     # dev_data = DataUtils.convert_data(dev_data, args.context_max_length, max_question_len)
@@ -329,8 +362,8 @@ def main():
 
     # because of memory
     # args.batch_size = 32
-    # args.batch_size = 16
-    args.batch_size = 4
+    args.batch_size = 16
+    # args.batch_size = 8
     args.num_features = 4
     args.num_epochs = 100
 
@@ -351,7 +384,7 @@ def main():
     optimizer.setup(model)
 
     train_iter = chainer.iterators.SerialIterator(train_data_input, args.batch_size)
-    #validation_iter = chainer.iterators.SerialIterator(dev_data, args.batch_size, repeat=False, shuffle=False)
+    # validation_iter = chainer.iterators.SerialIterator(dev_data, args.batch_size, repeat=False, shuffle=False)
 
     updater = training.StandardUpdater(
         train_iter, optimizer, loss_func=model.get_loss_function(),
@@ -367,8 +400,8 @@ def main():
     earlystop_trigger = triggers.EarlyStoppingTrigger(monitor=monitor, patients=5, mode="max",
                                                       max_trigger=(args.num_epochs, 'epoch'))
 
-    # trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
-    trainer = training.Trainer(updater, earlystop_trigger)
+    trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
+    # trainer = training.Trainer(updater, earlystop_trigger)
 
     save_model_file = "best_model_rl" if args.fine_tune else "best_model"
 

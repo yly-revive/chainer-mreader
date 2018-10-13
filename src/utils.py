@@ -4,6 +4,7 @@ from enum import Enum
 from progressbar import ProgressBar
 # import tqdm
 import os
+import h5py
 
 from bilm import Batcher
 
@@ -77,6 +78,15 @@ class DataUtils(object):
     MAX_Q_LENGTH = 0
 
     batcher = None
+    use_elmo = False
+
+    """
+    context_embedding = None
+    question_embedding = None
+    """
+    elmo_sentence_mapping = {}
+    elmo_embedding = None
+    elmo_h5py_file = None
 
     def __init__(self):
         super(DataUtils, self).__init__()
@@ -84,6 +94,36 @@ class DataUtils(object):
     @staticmethod
     def load_elmo_batcher(vocab_file):
         DataUtils.batcher = Batcher(vocab_file, 50)
+        DataUtils.use_elmo = True
+
+    """
+    @staticmethod
+    def load_elmo_embedding(context_file, question_file):
+
+        print("load context embedding...")
+        DataUtils.context_embedding = np.load(context_file)
+
+        print("load question embedding...")
+        DataUtils.question_embedding = np.load(question_file)
+
+        DataUtils.use_elmo = True
+    """
+
+    @staticmethod
+    def load_elmo_embedding(sentence_mapping_file, embedding_file):
+
+        print("load sentence mapping...")
+        with open(sentence_mapping_file) as f:
+            id = 0
+            for line in f:
+                DataUtils.elmo_sentence_mapping[line.strip()] = str(id)
+                id += 1
+
+        print("load embedding...")
+        # DataUtils.elmo_embedding = np.load(question_file)
+        DataUtils.elmo_h5py_file = h5py.File(embedding_file, 'r')
+
+        DataUtils.use_elmo = True
 
     @staticmethod
     def load_data(file):
@@ -609,17 +649,41 @@ class DataUtils(object):
         ret += (q_feature,)
         ret += (np.asarray(q_mask, dtype=int),)
 
-        # add elmo id
-        context_ids = DataUtils.batcher.batch_sentences([item["document"]], add_bos_eos=False)
-        question_ids = DataUtils.batcher.batch_sentences([item["question"]], add_bos_eos=False)
+        if DataUtils.use_elmo:
 
-        c_ids = np.zeros((DataUtils.MAX_DOC_LENGTH, 50), dtype=np.int32)
-        q_ids = np.zeros((DataUtils.MAX_Q_LENGTH, 50), dtype=np.int32)
-        c_ids[:len(context_ids[0]), :] = context_ids[0]
-        q_ids[:len(question_ids[0]), :] = question_ids[0]
+            # add elmo id
+            context_ids = DataUtils.batcher.batch_sentences([item["document"]], add_bos_eos=False)
+            question_ids = DataUtils.batcher.batch_sentences([item["question"]], add_bos_eos=False)
 
-        ret += (c_ids,)
-        ret += (q_ids,)
+            c_ids = np.zeros((DataUtils.MAX_DOC_LENGTH, 50), dtype=np.int32)
+            q_ids = np.zeros((DataUtils.MAX_Q_LENGTH, 50), dtype=np.int32)
+            c_ids[:len(context_ids[0]), :] = context_ids[0]
+            q_ids[:len(question_ids[0]), :] = question_ids[0]
+
+            ret += (c_ids,)
+            ret += (q_ids,)
+
+
+            """
+            # embedding precomputed by allennlp, the result is not as good as expected.(validation)
+            # add precomputed elmo embeddings
+            d_elmo_array = np.asarray(DataUtils.context_embedding.item()[item['qid2cid']]).reshape(-1, 1024)
+            q_elmo_array = np.asarray(DataUtils.question_embedding.item()[item['id']]).reshape(-1, 1024)
+            """
+
+            """
+            d_elmo_array = DataUtils.elmo_h5py_file[DataUtils.elmo_sentence_mapping[str(item["qid2cid"])]][...]
+            q_elmo_array = DataUtils.elmo_h5py_file[DataUtils.elmo_sentence_mapping[str(item["id"])]][...]
+
+            d_elmo_embedding = np.zeros((DataUtils.MAX_DOC_LENGTH, 1024), dtype=np.float32)
+            q_elmo_embedding = np.zeros((DataUtils.MAX_Q_LENGTH, 1024), dtype=np.float32)
+
+            d_elmo_embedding[:len(d_elmo_array[-1]), :] = d_elmo_array[-1, :, :]
+            q_elmo_embedding[:len(q_elmo_array[-1]), :] = q_elmo_array[-1, :, :]
+
+            ret += (d_elmo_embedding,)
+            ret += (q_elmo_embedding,)
+            """
 
         ret += (target,)
 

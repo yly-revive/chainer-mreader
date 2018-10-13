@@ -23,14 +23,18 @@ class MReader_V6(chainer.Chain):
 
         with self.init_scope():
             self.args = args
-            self.elmo = Elmo(
-                args.options_file,
-                args.weight_file,
-                # num_output_representations=2,
-                num_output_representations=1,
-                requires_grad=False,
-                do_layer_norm=False,
-                dropout=0.)
+
+
+            # online 
+            if args.use_elmo:
+                self.elmo = Elmo(
+                    args.options_file,
+                    args.weight_file,
+                    # num_output_representations=2,
+                    num_output_representations=1,
+                    requires_grad=False,
+                    do_layer_norm=False,
+                    dropout=0.)
 
             # gamma
             self.gamma = Parameter(
@@ -72,7 +76,12 @@ class MReader_V6(chainer.Chain):
             # encoder_input_size = args.embedding_dim + args.char_hidden_size * 2 + args.num_features
 
             # encoder_input_size = args.embedding_dim + args.char_hidden_size * 2 + args.pos_size + args.ner_size + args.qtype_size + 1
-            encoder_input_size = args.embedding_dim + args.char_hidden_size * 2 + args.pos_size + args.ner_size + 1024
+            if args.use_elmo:
+                encoder_input_size = args.embedding_dim + args.char_hidden_size * 2 + args.pos_size + args.ner_size + \
+                                     1024 + 1
+            else:
+                encoder_input_size = args.embedding_dim + args.char_hidden_size * 2 + args.pos_size + args.ner_size + 1
+
             self.encoder_bilstm = L.NStepBiLSTM(n_layers=1, in_size=encoder_input_size,
                                                 out_size=args.encoder_hidden_size, dropout=args.encoder_dropout)
 
@@ -108,7 +117,7 @@ class MReader_V6(chainer.Chain):
             # self.f1 = AverageMeter()
             # self.exact_match = AverageMeter()
 
-    def forward(self, c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, context_ids, question_ids):
+    def forward(self, c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, context_ids=None, question_ids=None):
         """Inputs:
         c = document word indices             [batch * len_d]
         c_char = document char indices           [batch * len_d * len_c]
@@ -214,28 +223,39 @@ class MReader_V6(chainer.Chain):
             # c_input.append(c_feature)
             # q_input.append(q_feature)
 
-        ## add elmo
-        '''
-        context_embeddings = self.elmo.forward(context_ids)
-        question_embeddings = self.elmo.forward(question_ids)
-        '''
-        batch_size = context_ids.shape[0]
-        context_max_length = context_ids.shape[1]
-        question_max_length = question_ids.shape[1]
-        context_embeddings = []
-        question_embeddings = []
-        for i in range(batch_size):
-            context_elmo = self.elmo.forward(
-                self.xp.asarray([context_ids[i][:self.xp.sum(c_mask[i])]], dtype=self.xp.int32))
-            context_embeddings.append(F.pad_sequence(context_elmo["elmo_representations"][0],
-                                                     length=context_max_length))
+        if self.args.use_elmo:
+            # add elmo
 
-            question_elmo = self.elmo.forward(
-                self.xp.asarray([question_ids[i][:self.xp.sum(q_mask[i])]], dtype=self.xp.int32))
-            question_embeddings.append(F.pad_sequence(question_elmo["elmo_representations"][0],
-                                                      length=question_max_length))
+            # add elmo online
+            '''
+            context_embeddings = self.elmo.forward(context_ids)
+            question_embeddings = self.elmo.forward(question_ids)
+            '''
+            batch_size = context_ids.shape[0]
+            context_max_length = context_ids.shape[1]
+            question_max_length = question_ids.shape[1]
+            context_embeddings = []
+            question_embeddings = []
 
-        c_input.append(F.vstack(context_embeddings))
+            # comment: elmo batch require data to be ordered by their lengths -- longest sequences first
+            for i in range(batch_size):
+                context_elmo = self.elmo.forward(
+                    self.xp.asarray([context_ids[i][:self.xp.sum(c_mask[i])]], dtype=self.xp.int32))
+                context_embeddings.append(F.pad_sequence(context_elmo["elmo_representations"][0],
+                                                         length=context_max_length))
+
+                question_elmo = self.elmo.forward(
+                    self.xp.asarray([question_ids[i][:self.xp.sum(q_mask[i])]], dtype=self.xp.int32))
+                question_embeddings.append(F.pad_sequence(question_elmo["elmo_representations"][0],
+                                                          length=question_max_length))
+
+            c_input.append(F.vstack(context_embeddings))
+            q_input.append(F.vstack(question_embeddings))
+            """
+            c_input.append(context_ids)
+            q_input.append(question_ids)
+            """
+
         # Encode context with bi-lstm
         c_input = F.concat(c_input, axis=2)
         c_input_bilstm = [i for i in c_input]
@@ -243,7 +263,7 @@ class MReader_V6(chainer.Chain):
         # _, _, context = self.encoder_bilstm(None, None, F.concat(c_input, axis=2))
         _, _, context = self.encoder_bilstm(None, None, c_input_bilstm)
 
-        q_input.append(F.vstack(question_embeddings))
+        # q_input.append(F.vstack(question_embeddings))
         # Encode question with bi-lstm
         q_input = F.concat(q_input, axis=2)
         q_input_bilstm = [i for i in q_input]
@@ -423,7 +443,7 @@ class MReader_V6(chainer.Chain):
 
     def get_loss_function(self):
 
-        def loss_f(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, context_ids, question_ids, target):
+        def loss_f_elmo(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, context_ids, question_ids, target):
             """
             # rec_loss = 0
             start_scores, end_scores = self.forward(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask)
@@ -474,7 +494,61 @@ class MReader_V6(chainer.Chain):
                 {'mle_loss': mle_loss, 'rl_loss': rl_loss, 'loss': self.loss}, observer=self)
             return self.loss
 
-        return loss_f
+        def loss_f(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, target):
+            """
+            # rec_loss = 0
+            start_scores, end_scores = self.forward(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask)
+
+            # start_losses = F.bernoulli_nll(start_scores, target[:, 0, 0].astype(self.xp.float32))
+            # end_losses = F.bernoulli_nll(end_scores, target[:, 0, 1].astype(self.xp.float32))
+
+            # start_losses = F.bernoulli_nll(target[:, 0, 0].astype(self.xp.float32), start_scores)
+            # end_losses = F.bernoulli_nll(target[:, 0, 1].astype(self.xp.float32), end_scores)
+            start_losses = self.neg_loglikelihood_fun(target[:, 0, 0], start_scores)
+
+            end_losses = self.neg_loglikelihood_fun(target[:, 0, 1], end_scores, c_mask)
+
+            rec_loss = start_losses + end_losses
+            """
+            rl_loss = 0
+
+            start_scores, end_scores = self.forward(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask)
+
+            mle_loss = self.mle_loss_func(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, target,
+                                          start_scores, end_scores)
+
+            # if self.args.lambda_param != 1:
+            if self.args.fine_tune:
+                rl_loss = self.rl_loss_func(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, target,
+                                            start_scores, end_scores)
+
+            self.rec_loss = mle_loss
+            # self.loss = self.args.lambda_param * mle_loss + (1 - self.args.lambda_param) * rl_loss
+            if self.args.fine_tune:
+                self.loss = mle_loss / (2 * F.square(self.sigma_a[0])) \
+                            + rl_loss / (2 * F.square(self.sigma_b[0])) \
+                            + F.log(F.square(self.sigma_a[0])) \
+                            + F.log(F.square(self.sigma_b[0]))
+            else:
+                self.loss = mle_loss
+
+            """
+            # computational graph
+            if (self.args.dot_file is not None) and os.path.exists(self.args.dot_file) is False:
+                g = CG.build_computational_graph((self.rec_loss,))
+                with open(self.args.dot_file, 'w') as f:
+                    f.write(g.dump())
+            """
+
+            chainer.report(
+                {'mle_loss': mle_loss, 'rl_loss': rl_loss, 'loss': self.loss}, observer=self)
+            return self.loss
+
+        # return loss_f
+        if self.args.use_elmo:
+            return loss_f_elmo
+        else:
+            return loss_f
 
     def neg_loglikelihood_fun(self, target, distribution, mask=None):
 
