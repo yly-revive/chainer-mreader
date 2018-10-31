@@ -818,7 +818,7 @@ class MReader_V6(chainer.Chain):
     def get_loss_function(self):
 
         def loss_f_elmo(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, context_ids, question_ids,
-                        c_has_gloss, c_gloss, q_has_gloss, q_gloss, target):
+                        target):
             """
             # rec_loss = 0
             start_scores, end_scores = self.forward(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask)
@@ -837,8 +837,7 @@ class MReader_V6(chainer.Chain):
             rl_loss = 0
 
             start_scores, end_scores = self.forward_elmo(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask,
-                                                         context_ids, question_ids,
-                                                         c_has_gloss, c_gloss, q_has_gloss, q_gloss)
+                                                         context_ids, question_ids)
 
             mle_loss = self.mle_loss_func(c, c_char, c_feature, c_mask, q, q_char, q_feature, q_mask, target,
                                           start_scores, end_scores)

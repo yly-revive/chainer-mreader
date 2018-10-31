@@ -19,6 +19,7 @@ import random
 
 from utils import *
 from mreader_evaluate import *
+from mreader_evaluate_pred import *
 
 # Defaults
 DATA_DIR = os.path.join('data', 'datasets')
@@ -78,6 +79,11 @@ def add_train_args(parser):
 
     runtime.add_argument('--learning-rate', type=float, default=0.0008,
                          help='learning rate')
+
+    runtime.add_argument('--predict', action="store_true")
+
+    runtime.add_argument('--train-ratio', type=float, default=0.005)
+    runtime.add_argument('--dev-ratio', type=float, default=0.05)
 
     # Files
     files = parser.add_argument_group('Filesystem')
@@ -147,7 +153,7 @@ def add_train_args(parser):
                                    help='Initial learning rate for training mreader')
     optimizer_setting.add_argument('--rl-optimizer', type=str, default='SGD',
                                    help='Optimizer for training RL')
-    optimizer_setting.add_argument('--rl-initial-learning-rate', type=float, default=0.001,
+    optimizer_setting.add_argument('--rl-initial-learning-rate', type=float, default=0.0001,
                                    help='Initial learning rate for training RL')
 
     # elmo
@@ -270,7 +276,9 @@ def main():
         dev_data = dev_data[:128]
     else:
         # debug
-        train_size = int(len(train_data) * 0.005)
+        # train_size = int(len(train_data) * 0.005)
+        train_size = int(len(train_data) * args.train_ratio)
+
         # train_size = int(len(train_data) * 0.3)
         # train_size = int(len(train_data) * 0.7)
         # train_size = len(train_data)
@@ -278,7 +286,9 @@ def main():
 
         train_data = train_data[:train_size]
 
-        dev_size = int(len(dev_data) * 0.05)
+        # dev_size = int(len(dev_data) * 0.05)
+        dev_size = int(len(dev_data) * args.dev_ratio)
+
         # dev_size = len(dev_data)
         # dev_size = int(len(dev_data) * 0.5)
         print(dev_size)
@@ -333,12 +343,12 @@ def main():
         args.dictionary = DataUtils.load_dictionary(args.dictionary_file, args.dict_embedding_file)
 
     if args.use_elmo:
-        """
         # add elmo online
         # initialize elmo batcher
         DataUtils.load_elmo_batcher(args.vocab_file)
-        """
-        DataUtils.load_elmo_embedding(args.context_elmo_embedding, args.question_elmo_embedding)
+
+        # add elmo embedding offline
+        # DataUtils.load_elmo_embedding(args.context_elmo_embedding, args.question_elmo_embedding)
 
     # train_data = DataUtils.convert_data(train_data, args.context_max_length, max_question_len)
     # dev_data = DataUtils.convert_data(dev_data, args.context_max_length, max_question_len)
@@ -359,16 +369,33 @@ def main():
     # cg
     args.dot_file = "cg_f__.dot"
 
+    args.backup_fine_tune = False
+    if args.fine_tune:
+        args.backup_fine_tune = True
+        args.fine_tune = False
+
     # model = MReader_V3(args)
     model = MReader_V6(args)
 
     if args.fine_tune:
         chainer.serializers.load_npz('result/best_model', model)
+        # chainer.serializers.load_npz('result/snapshot_iter_547', model, path='updater/model:main/')
 
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu(args.gpu)
 
+    """
+    if args.predict:
+        with chainer.using_config('train', False):
+            predictor = MReaderEvaluatorPred(
+                model, dev_data, device=args.gpu,
+                f1_key='validation/main/f1', em_key='validation/main/em', batch_size=args.batch_size,
+                dot_file='cg_n.dot'
+            )
+            predictor()
+        return
+    """
     optimizer = chainer.optimizers.Adam(alpha=args.learning_rate)
     optimizer.setup(model)
 
@@ -389,8 +416,8 @@ def main():
     earlystop_trigger = triggers.EarlyStoppingTrigger(monitor=monitor, patients=5, mode="max",
                                                       max_trigger=(args.num_epochs, 'epoch'))
 
-    trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
-    # trainer = training.Trainer(updater, earlystop_trigger)
+    # trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
+    trainer = training.Trainer(updater, earlystop_trigger)
 
     save_model_file = "best_model_rl" if args.fine_tune else "best_model"
 
@@ -401,9 +428,17 @@ def main():
     )
     """
     trainer.extend(
+        # extensions.snapshot_object(model, save_model_file + "_{.updater.epoch}"),
         extensions.snapshot_object(model, save_model_file),
         trigger=chainer.training.triggers.MaxValueTrigger(monitor)
     )
+
+    '''
+    trainer.extend(
+        extensions.snapshot(),
+        trigger=chainer.training.triggers.MaxValueTrigger(monitor)
+    )
+    '''
     # trainer.extend(extensions.Evaluator(validation_iter, model, device=args.gpu, eval_func=model.get_evaluation_fun()))
     '''
     trainer.extend(
@@ -462,6 +497,97 @@ def main():
 
     print('start training')
     trainer.run()
+
+    """
+    with chainer.using_config('train', False):
+        chainer.serializers.load_npz('result/best_model', model)
+        predictor = MReaderEvaluatorPred(
+            model, dev_data, device=args.gpu,
+            f1_key='validation/main/f1', em_key='validation/main/em', batch_size=args.batch_size,
+            dot_file='cg_n.dot'
+        )
+        predictor()
+    """
+    if args.backup_fine_tune:
+        args.fine_tune = True
+        model.args.fine_tune = True
+
+    if args.fine_tune:
+        chainer.serializers.load_npz('result/best_model', model)
+
+        if args.gpu >= 0:
+            chainer.cuda.get_device(args.gpu).use()
+            model.to_gpu(args.gpu)
+
+        """
+        if args.predict:
+            with chainer.using_config('train', False):
+                predictor = MReaderEvaluatorPred(
+                    model, dev_data, device=args.gpu,
+                    f1_key='validation/main/f1', em_key='validation/main/em', batch_size=args.batch_size,
+                    dot_file='cg_n.dot'
+                )
+                predictor()
+            return
+        """
+        args.fine_tune = True
+        model.args.fine_tune = True
+        # optimizer = chainer.optimizers.Adam(alpha=args.learning_rate)
+        optimizer_rl = chainer.optimizers.Adam(alpha=0.0001)
+        optimizer_rl.setup(model)
+
+        train_iter_rl = chainer.iterators.SerialIterator(train_data_input, args.batch_size)
+        # validation_iter = chainer.iterators.SerialIterator(dev_data, args.batch_size, repeat=False, shuffle=False)
+
+        updater_rl = training.StandardUpdater(
+            train_iter_rl, optimizer_rl, loss_func=model.get_loss_function(),
+            device=args.gpu
+        )
+
+        monitor_rl = "validation/main/f1" if args.fine_tune else "validation/main/em"
+
+        earlystop_trigger_rl = triggers.EarlyStoppingTrigger(monitor=monitor_rl, patients=10, mode="max",
+                                                             max_trigger=(args.num_epochs, 'epoch'))
+
+        # trainer = training.Trainer(updater, (args.num_epochs, 'epoch'))
+        trainer_rl = training.Trainer(updater_rl, earlystop_trigger_rl)
+
+        save_model_file_rl = "best_model_rl" if args.fine_tune else "best_model"
+
+        """
+        trainer.extend(
+            extensions.snapshot_object(model, save_model_file),
+            trigger=chainer.training.triggers.MinValueTrigger('main/loss')
+        )
+        """
+        trainer_rl.extend(
+            extensions.snapshot_object(model, save_model_file_rl + "_{.updater.epoch}"),
+            # extensions.snapshot_object(model, save_model_file_rl),
+            trigger=chainer.training.triggers.MaxValueTrigger(monitor_rl)
+        )
+
+        # computational graph 2nd way
+        trainer_rl.extend(extensions.dump_graph(root_name="main/loss", out_name="cg.dot"))
+
+        trainer_rl.extend(
+            MReaderEvaluator(
+                model, dev_data, device=args.gpu,
+                f1_key='validation/main/f1', em_key='validation/main/em', batch_size=args.batch_size, dot_file='cg_n.dot'
+            )
+        )
+
+        trainer_rl.extend(
+            extensions.LogReport()
+        )
+        trainer_rl.extend(
+            extensions.PrintReport(
+                ['epoch', 'main/loss', 'main/mle_loss', 'main/rl_loss', 'validation/main/f1', 'validation/main/em',
+                 'elapsed_time']
+            )
+        )
+
+        print("rl start running...")
+        trainer_rl.run()
 
 
 if __name__ == '__main__':
