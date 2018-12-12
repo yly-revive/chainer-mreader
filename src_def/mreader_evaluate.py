@@ -75,6 +75,7 @@ class MReaderEvaluator(chainer.training.Extension):
                         f1.update(0)
                         continue
                     '''
+
                     max_val = 0
                     # argmax_j1 = 0
                     start = cuda.to_cpu(s.data)

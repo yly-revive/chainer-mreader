@@ -419,10 +419,18 @@ class MemAnsPtr_V6_Variant(chainer.Chain):
 
         a_score = F.batch_matmul(y, F.broadcast_to(F.expand_dims(self.w_q, 0), (batch_size, self.w_q.shape[0], 1)))
 
+        """
         a_score = F.softmax(
             F.squeeze(a_score)  # [b,q]
         )  # [b,q]
 
+        """
+        a_score = F.softmax(
+            F.reshape(
+                F.squeeze(a_score),
+                (batch_size, -1)
+            )
+        )
         """
         s = F.batch_matmul(
             F.expand_dims(
@@ -467,6 +475,9 @@ class MemAnsPtr_V6_Variant(chainer.Chain):
         cond = c_mask.astype(self.xp.bool)
 
         s_value = F.squeeze(s_value)
+
+        if batch_size == 1:
+            s_value = F.reshape(s_value, (batch_size, -1))
 
         infinit_matrix = self.xp.ones(s_value.shape, dtype=self.xp.float32) * -1 * self.xp.inf
         s_value = F.where(cond, s_value, infinit_matrix)
@@ -524,6 +535,8 @@ class MemAnsPtr_V6_Variant(chainer.Chain):
         )
 
         e_value = F.squeeze(e_value)
+        if batch_size == 1:
+            e_value = F.reshape(e_value, (batch_size, -1))
 
         e_value = F.where(cond, e_value, infinit_matrix)
 

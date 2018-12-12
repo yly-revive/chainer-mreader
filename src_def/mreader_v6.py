@@ -111,6 +111,7 @@ class MReader_V6(chainer.Chain):
             context_hidden_size = 2 * args.encoder_hidden_size
 
             for i in six.moves.range(args.hops):
+
                 # Iterative Aligner
                 self.interactive_aligners.append(InteractiveAligner_V6(dim=self.args.nonlinear_dim))
                 self.interactive_SFUs.append(SFU_V6(context_hidden_size, 3 * context_hidden_size))
@@ -127,6 +128,38 @@ class MReader_V6(chainer.Chain):
                     self.aggregate_rnns.append(L.NStepBiLSTM(n_layers=1, in_size=context_hidden_size * args.hops,
                                                              out_size=args.encoder_hidden_size,
                                                              dropout=args.encoder_dropout))
+                """
+                # Iterative Aligner
+                tmp_interactive_aligner = InteractiveAligner_V6(dim=self.args.nonlinear_dim)
+                self.interactive_aligners.append(tmp_interactive_aligner)
+                tmp_interactive_aligner.name = 'ia_{}'.format(i)
+
+                tmp_interactive_sfu = SFU_V6(context_hidden_size, 3 * context_hidden_size)
+                self.interactive_SFUs.append(tmp_interactive_sfu)
+                tmp_interactive_sfu.name = 'is_{}'.format(i)
+
+                # Self Aligner
+                tmp_self_aligner = SelfAttnAligner_V6(dim=self.args.nonlinear_dim)
+                self.self_aligners.append(tmp_self_aligner)
+                tmp_self_aligner.name = 'sa_{}'.format(i)
+
+                tmp_self_sfu = SFU_V6(context_hidden_size, 3 * context_hidden_size)
+                self.self_SFUs.append(tmp_self_sfu)
+                tmp_self_sfu.name = 'ss_{}'.format(i)
+
+                if i < args.hops - 1:
+                    tmp_a_bilsm = L.NStepBiLSTM(n_layers=1, in_size=context_hidden_size,
+                                                out_size=args.encoder_hidden_size,
+                                                dropout=args.encoder_dropout)
+                    self.aggregate_rnns.append(tmp_a_bilsm)
+                    tmp_a_bilsm.name = 'a_bilstm_{}'.format(i)
+                else:
+                    tmp_a_bilsm = L.NStepBiLSTM(n_layers=1, in_size=context_hidden_size * args.hops,
+                                                out_size=args.encoder_hidden_size,
+                                                dropout=args.encoder_dropout)
+                    self.aggregate_rnns.append(tmp_a_bilsm)
+                    tmp_a_bilsm.name = 'a_bilstm_{}'.format(i)
+                """
 
             self.mem_ans_ptr = MemAnsPtr_V6_Variant(self.args, context_hidden_size, 3 * context_hidden_size)
 
@@ -292,6 +325,23 @@ class MReader_V6(chainer.Chain):
 
             c_pos_input = F.squeeze(c_pos_input)
             c_ner_input = F.squeeze(c_ner_input)
+
+            ## reshape if batchsize is 1
+            if len(c_pos_input.shape) == 2:
+                shape_1, shape_2 = c_pos_input.shape
+                c_pos_input = F.reshape(c_pos_input, (1, shape_1, shape_2))
+
+            if len(c_ner_input.shape) == 2:
+                shape_1, shape_2 = c_ner_input.shape
+                c_ner_input = F.reshape(c_ner_input, (1, shape_1, shape_2))
+            """
+            ## reshape in case of dim error
+            c_pos_b, c_pos_sent, _, _ = c_pos_input.shape
+            c_ner_b, c_ner_sent, _, _ = c_ner_input.shape
+
+            c_pos_input = F.reshape(F.squeeze(c_pos_input), (c_pos_b, c_pos_sent, -1))
+            c_ner_input = F.reshape(F.squeeze(c_ner_input), (c_ner_b, c_ner_sent, -1))
+            """
             # c_em_feat_input = F.squeeze(c_em_feat).data.astype(self.xp.float32)
             c_em_feat_input = c_em_feat.data.astype(self.xp.float32)
             # not mentioned in V6
@@ -304,13 +354,32 @@ class MReader_V6(chainer.Chain):
             # c_input.append(c_qtype_input)
 
             q_pos_feat, q_ner_feat, q_em_feat, q_qtype_feat = F.split_axis(q_feature, 4, axis=2)
+
             q_pos_input = self.pos_embedding(q_pos_feat)
             q_ner_input = self.ner_embedding(q_ner_feat)
+
             # not mentioned in V6
             # q_qtype_input = self.q_type_embedding(q_qtype_feat)
 
             q_pos_input = F.squeeze(q_pos_input)
             q_ner_input = F.squeeze(q_ner_input)
+
+            ## reshape if batchsize is 1
+            if len(q_pos_input.shape) == 2:
+                shape_1, shape_2 = q_pos_input.shape
+                q_pos_input = F.reshape(q_pos_input, (1, shape_1, shape_2))
+
+            if len(q_ner_input.shape) == 2:
+                shape_1, shape_2 = q_ner_input.shape
+                q_ner_input = F.reshape(q_ner_input, (1, shape_1, shape_2))
+            """
+            ## reshape in case of dim error
+            q_pos_b, q_pos_sent, _, _ = q_pos_input.shape
+            q_ner_b, q_ner_sent, _, _ = q_ner_input.shape
+
+            q_pos_input = F.reshape(F.squeeze(q_pos_input), (q_pos_b, q_pos_sent, -1))
+            q_ner_input = F.reshape(F.squeeze(q_ner_input), (q_ner_b, q_ner_sent, -1))
+            """
             # q_em_feat_input = F.squeeze(q_em_feat).data.astype(self.xp.float32)
             q_em_feat_input = q_em_feat.data.astype(self.xp.float32)
             # not mentioned in V6
@@ -616,6 +685,8 @@ class MReader_V6(chainer.Chain):
             question_embeddings = []
 
             # comment: elmo batch require data to be ordered by their lengths -- longest sequences first
+            """ sort first"""
+
             for i in range(batch_size):
                 context_elmo = self.elmo.forward(
                     self.xp.asarray([context_ids[i][:self.xp.sum(c_mask[i])]], dtype=self.xp.int32))
@@ -626,7 +697,32 @@ class MReader_V6(chainer.Chain):
                     self.xp.asarray([question_ids[i][:self.xp.sum(q_mask[i])]], dtype=self.xp.int32))
                 question_embeddings.append(F.pad_sequence(question_elmo["elmo_representations"][0],
                                                           length=question_max_length))
+            """
+            c_len_arr = self.xp.sum(c_mask, axis=1)
+            c_arg_sorted_arr = self.xp.argsort(c_len_arr)[::-1]
+            print(c_len_arr)
+            print(c_arg_sorted_arr)
+            print(c_len_arr[c_arg_sorted_arr])
+            # new_context_ids = context_ids * c_mask
+            print(context_ids)
+            print(context_ids[c_arg_sorted_arr])
+            c_arg_sorted_elmo = self.elmo.forward(context_ids[c_arg_sorted_arr])
+            aux_c_arg_sorted_arr = self.xp.argsort(c_arg_sorted_arr)
+            # for i in range(batch_size):
+            # context_embeddings.append(c_arg_sorted_elmo[aux_c_arg_sorted_arr[i]])
 
+            q_len_arr = self.xp.sum(q_mask, axis=1)
+            q_arg_sorted_arr = self.xp.argsort(q_len_arr)[::-1]
+            # new_context_ids = context_ids * c_mask
+            q_arg_sorted_elmo = self.elmo.forward(question_ids[q_arg_sorted_arr])
+            aux_q_arg_sorted_arr = self.xp.argsort(q_arg_sorted_arr)
+            for i in range(batch_size):
+                context_embeddings.append(c_arg_sorted_elmo[aux_c_arg_sorted_arr[i]])
+                question_embeddings.append(q_arg_sorted_elmo[aux_q_arg_sorted_arr[i]])
+
+            # context_embeddings = self.elmo.forward(context_ids)
+            # question_embeddings = self.elmo.forward(question_ids)
+            """
             c_input.append(F.vstack(context_embeddings))
             q_input.append(F.vstack(question_embeddings))
 
